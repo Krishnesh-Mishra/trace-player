@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(cargo fetch *)",
+      "Bash(rustup toolchain *)",
+      "Bash(cargo check *)",
+      "Bash(echo \"EXIT=$?\")",
+      "WebFetch(domain:github.com)",
+      "Bash(rustup show *)",
+      "Bash(env)",
+      "Bash(rustup which *)",
+      "Bash(rustc --version)",
+      "Bash(cargo --version)",
+      "Bash(cargo build *)",
+      "Bash(/c/Users/krish/Desktop/Bin/Coding/Projects/Un-Finished/media-player/src-tauri/target/release/media-player.exe *)",
+      "PowerShell(Get-Process media-player -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, @{Name='WorkingSetMB';Expression={[math]::Round\\($_.WorkingSet64 / 1MB, 1\\)}})",
+      "Bash(npm run *)",
+      "Bash(where magick *)",
+      "Bash(npx tauri *)"
+    ]
+  }
+}

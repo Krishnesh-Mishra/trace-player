@@ -1,0 +1,4 @@
+# Tell libmpv-sys where to find libmpv.dll.a at compile time.
+# "assets" is resolved relative to the workspace root (this src-tauri/ directory).
+[env]
+LIBMPV_LIB_DIR = { value = "assets", relative = true }
