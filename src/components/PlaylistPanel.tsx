@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Plus, Trash2, Shuffle, Repeat, Play, GripVertical } from "lucide-react";
+import { X, Plus, Trash2, Shuffle, Repeat, Play, GripVertical, Globe } from "lucide-react";
 import type { PlaylistItem } from "./types";
 
 interface Props {
@@ -9,6 +9,7 @@ interface Props {
   items: PlaylistItem[];
   loopPlaylist: boolean;
   onAdd: () => void;
+  onAddUrl: () => void;
   onClear: () => void;
   onShuffle: () => void;
   onLoopPlaylistToggle: () => void;
@@ -28,6 +29,7 @@ export default function PlaylistPanel({
   items,
   loopPlaylist,
   onAdd,
+  onAddUrl,
   onClear,
   onShuffle,
   onLoopPlaylistToggle,
@@ -62,13 +64,21 @@ export default function PlaylistPanel({
     return () => document.removeEventListener("mousedown", handler);
   }, [open, onClose]);
 
+  useEffect(() => {
+    if (!open) {
+      setDragIdx(null);
+      setDropIdx(null);
+    }
+  }, [open]);
+
   const handleDrop = (toIdx: number) => {
     if (dragIdx === null || dragIdx === toIdx) {
       setDragIdx(null);
       setDropIdx(null);
       return;
     }
-    onMove(dragIdx, toIdx);
+    const dest = toIdx > dragIdx ? toIdx + 1 : toIdx;
+    onMove(dragIdx, dest);
     setDragIdx(null);
     setDropIdx(null);
   };
@@ -114,6 +124,7 @@ export default function PlaylistPanel({
 
           <div className="flex items-center gap-1 px-3 py-2 border-b border-white/8 shrink-0">
             <ToolbarButton onClick={onAdd} icon={<Plus className="w-3.5 h-3.5" />} label="Add" />
+            <ToolbarButton onClick={onAddUrl} icon={<Globe className="w-3.5 h-3.5" />} label="URL" />
             <ToolbarButton onClick={onShuffle} icon={<Shuffle className="w-3.5 h-3.5" />} label="Shuffle" />
             <ToolbarButton
               onClick={onLoopPlaylistToggle}
@@ -152,7 +163,7 @@ export default function PlaylistPanel({
               <ul className="px-2 space-y-0.5">
                 {items.map((item, i) => (
                   <li
-                    key={`${item.index}-${item.filename}`}
+                    key={String(item.index)}
                     draggable
                     onDragStart={() => setDragIdx(i)}
                     onDragOver={(e) => {
@@ -200,7 +211,7 @@ export default function PlaylistPanel({
                                  transition-opacity duration-100 shrink-0"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onRemove(item.index);
+                        onRemove(i);
                       }}
                       title="Remove"
                     >

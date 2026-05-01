@@ -2,11 +2,16 @@ use std::sync::atomic::Ordering;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use crate::archive;
 use crate::perf::{self, PerfProfile, ResolvedPerf};
 use crate::player::Player;
 use crate::state::{AppState, PipGeometry};
+use crate::streaming::{self, AddedTorrent, StreamingSession};
 use crate::thumbnailer;
 
 #[derive(Deserialize)]
@@ -53,7 +58,7 @@ pub fn parse_track_list(json: &str) -> TrackList {
         None => return TrackList { audio, subtitle },
     };
 
-    for entry in arr {
+    for entry in arr.iter().take(512) {
         let kind = entry.get("type").and_then(|v| v.as_str()).unwrap_or("");
         if kind != "audio" && kind != "sub" {
             continue;
@@ -98,6 +103,10 @@ fn player_ref<'a>(state: &'a State<'_, AppState>) -> Result<&'a Player, String> 
 #[tauri::command]
 pub fn load_file(path: String, state: State<'_, AppState>) -> Result<(), String> {
     crate::np_info!("cmd", "load_file path={}", path);
+    // Local file replaces whatever was playing — stop previous torrents so
+    // they don't keep downloading in the background, and drop any open
+    // archive's bookkeeping so its cache_dir can be reclaimed.
+    drop_previous_sources(state.inner());
     player_ref(&state)?.load(&path)
 }
 
@@ -116,7 +125,56 @@ pub fn pause(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub fn seek(seconds: f64, mode: String, state: State<'_, AppState>) -> Result<(), String> {
     crate::np_debug!("cmd", "seek seconds={:.3} mode={}", seconds, mode);
-    player_ref(&state)?.seek(seconds, &mode)
+    let player = player_ref(&state)?;
+
+    // For active torrent streams: pre-announce the seek position so rqbit
+    // can reprioritize piece downloads before mpv's own range request lands.
+    // We calculate the target byte offset from (seek_time / duration) * file_size
+    // and send a tiny Range GET to rqbit's streaming endpoint. rqbit elevates
+    // pieces covering that range; without this it continues sequential
+    // download from wherever it was, causing multi-minute stalls on far seeks.
+    let active_item = state.active_torrent.lock().ok().and_then(|g| g.clone());
+    if let Some(ref active) = active_item {
+        let duration = player.get_property_f64("duration").unwrap_or(0.0);
+        let current_pos = player.get_property_f64("time-pos").unwrap_or(0.0);
+        // Resolve absolute target time from whatever seek mode the caller used.
+        let target_secs = match mode.as_str() {
+            "relative" => (current_pos + seconds).max(0.0),
+            "absolute-percent" => seconds.clamp(0.0, 100.0) / 100.0 * duration,
+            _ => seconds.max(0.0),
+        };
+        if duration > 1.0 {
+            // Look up the stream URL + file size for the currently-playing file.
+            let file_info = state.torrent_video_files.lock().ok().and_then(|files| {
+                files.iter()
+                    .find(|(idx, _, _)| *idx == active.file_idx)
+                    .map(|(_, url, size)| (url.clone(), *size))
+            });
+            if let Some((stream_url, file_size)) = file_info {
+                if file_size > 0 {
+                    // 4 MiB window starting at the seek byte offset. Large
+                    // enough that rqbit downloads a meaningful head-start chunk
+                    // (typically a few seconds of 1080p H.264).
+                    let byte_start = ((target_secs / duration) * file_size as f64) as u64;
+                    let byte_end = (byte_start + 4_194_304).min(file_size - 1);
+                    crate::np_debug!(
+                        "rqbit",
+                        "seek prefetch bytes={byte_start}-{byte_end} target={target_secs:.2}s"
+                    );
+                    std::thread::spawn(move || {
+                        let http = ureq::AgentBuilder::new()
+                            .timeout_connect(std::time::Duration::from_secs(3))
+                            .timeout_read(std::time::Duration::from_secs(5))
+                            .build();
+                        let range = format!("bytes={byte_start}-{byte_end}");
+                        let _ = http.get(&stream_url).set("Range", &range).call();
+                    });
+                }
+            }
+        }
+    }
+
+    player.seek(seconds, &mode)
 }
 
 /// Track the user's intended volume. When AGC is off, push it to mpv directly.
@@ -125,11 +183,10 @@ pub fn seek(seconds: f64, mode: String, state: State<'_, AppState>) -> Result<()
 #[tauri::command]
 pub fn set_volume(volume: f64, state: State<'_, AppState>) -> Result<(), String> {
     {
-        let mut params = state
-            .agc
-            .params
-            .lock()
-            .map_err(|e| format!("agc lock: {e}"))?;
+        let mut params = state.agc.params.lock().unwrap_or_else(|e| {
+            eprintln!("[cmd] agc params lock poisoned in set_volume, recovering");
+            e.into_inner()
+        });
         params.user_volume = volume;
     }
     if !state.agc.enabled.load(Ordering::Relaxed) {
@@ -491,13 +548,18 @@ pub fn set_audio_fx(
         );
     }
     // Insert EQ after compression so it shapes the post-compressed signal.
-    if eq_enabled && eq_bands.len() == 10 {
-        let mut bands = [0.0f64; 10];
-        for (i, b) in eq_bands.iter().take(10).enumerate() {
-            bands[i] = b.clamp(-12.0, 12.0);
+    if eq_enabled {
+        if eq_bands.len() != 10 {
+            eprintln!("[cmd] set_audio_fx: expected 10 eq_bands, got {}", eq_bands.len());
         }
-        if let Some(eq) = build_eq_filter(&bands) {
-            filters.push(eq);
+        if eq_bands.len() == 10 {
+            let mut bands = [0.0f64; 10];
+            for (i, b) in eq_bands.iter().take(10).enumerate() {
+                bands[i] = b.clamp(-12.0, 12.0);
+            }
+            if let Some(eq) = build_eq_filter(&bands) {
+                filters.push(eq);
+            }
         }
     }
     if dynamic_enabled {
@@ -689,6 +751,9 @@ pub fn playlist_play_index(idx: u32, state: State<'_, AppState>) -> Result<(), S
 
 #[tauri::command]
 pub fn playlist_clear(state: State<'_, AppState>) -> Result<(), String> {
+    // Clearing the playlist invalidates every torrent stream URL we'd
+    // queued; tell rqbit to forget them so they stop downloading.
+    drop_previous_sources(state.inner());
     player_ref(&state)?.command(&["playlist-clear"])
 }
 
@@ -754,6 +819,57 @@ pub fn get_playlist(state: State<'_, AppState>) -> Result<Vec<PlaylistItem>, Str
     Ok(read_playlist(p))
 }
 
+/// Snapshot of every piece of mpv state the React UI mirrors. Called by
+/// the frontend on mount so a Ctrl+R / WebView refresh can rehydrate
+/// hasFile / isPlaying / time-pos / duration / playlist / tracks etc.
+/// without the user having to reopen the file.
+///
+/// User-config (image params, audio FX, etc.) is persisted via tauri-
+/// plugin-store on the frontend and rehydrates from there — those values
+/// don't need to be in this payload. This is purely for transient state
+/// that mpv owns and React would otherwise default-initialize wrong.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerState {
+    pub path: String,
+    pub paused: bool,
+    pub time_pos: f64,
+    pub duration: f64,
+    pub volume: f64,
+    pub speed: f64,
+    pub playlist_pos: i64,
+    pub playlist: Vec<PlaylistItem>,
+    pub tracks: TrackList,
+}
+
+#[tauri::command]
+pub fn get_player_state(state: State<'_, AppState>) -> Result<PlayerState, String> {
+    let p = player_ref(&state)?;
+    let path = p.get_string_prop_pub("path").unwrap_or_default();
+    let paused = p.get_property_flag("pause").unwrap_or(true);
+    let time_pos = p.get_property_f64("time-pos").unwrap_or(0.0);
+    let duration = p.get_property_f64("duration").unwrap_or(0.0);
+    let volume = p.get_property_f64("volume").unwrap_or(80.0);
+    let speed = p.get_property_f64("speed").unwrap_or(1.0);
+    let playlist_pos = p.get_int_prop("playlist-pos").unwrap_or(-1);
+    let playlist = read_playlist(p);
+    let tracks_json = p
+        .get_property_string("track-list")
+        .unwrap_or_else(|| "[]".to_string());
+    let tracks = parse_track_list(&tracks_json);
+    Ok(PlayerState {
+        path,
+        paused,
+        time_pos,
+        duration,
+        volume,
+        speed,
+        playlist_pos,
+        playlist,
+        tracks,
+    })
+}
+
 // ── External subtitle ────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -783,7 +899,7 @@ pub fn frame_step(backward: bool, state: State<'_, AppState>) -> Result<(), Stri
 pub fn force_redraw(state: State<'_, AppState>) -> Result<(), String> {
     crate::np_info!("cmd", "force_redraw");
     let p = player_ref(&state)?;
-    let _ = p.command(&["seek", "0", "exact"]);
+    if let Err(e) = p.command(&["seek", "0", "exact"]) { eprintln!("[cmd] force_redraw seek failed (ok): {e}"); }
     Ok(())
 }
 
@@ -933,6 +1049,860 @@ pub fn get_pipeline_info(state: State<'_, AppState>) -> Result<PipelineInfo, Str
         video_sync: s("video-sync"),
         target_colorspace_hint: s("target-colorspace-hint"),
     })
+}
+
+// ── Network sources: HTTP / RTSP / magnet / .torrent ────────────────────────
+
+/// Open a network source. Detects scheme:
+///   - magnet:                → spawn rqbit (lazy), POST magnet, mpv loadfile
+///                              the http://127.0.0.1:<port>/torrents/.../stream/<idx> URL
+///   - <path>.torrent         → read bytes, same as above
+///   - http(s)/rtsp/rtmp/mms  → mpv loadfile the URL directly
+/// `append=true` queues into the playlist; `false` replaces the current file.
+// Async because the body can block for up to 120 s waiting on rqbit's
+// initial-checksum phase (`set_only_files` retry loop). Tauri runs SYNC
+// commands on the main thread, so a sync version of this would freeze the
+// window with Windows' "Not Responding" dialog. Async commands run on the
+// tokio runtime, leaving the Win32 message pump free to deliver paints
+// and keep the loading overlay alive while we wait.
+#[tauri::command]
+pub async fn open_source(
+    url: String,
+    append: bool,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    crate::np_info!("cmd", "open_source url={} append={}", url, append);
+    let p = player_ref(&state)?;
+    let mode = if append { "append-play" } else { "replace" };
+
+    // NOTE: drop_previous_sources is intentionally deferred to the point where
+    // we KNOW the new source is ready to play (just before loadfile). Dropping
+    // eagerly would kill the currently-playing torrent stream if the new source
+    // then fails to connect — leaving the user with nothing.
+
+    let lower = url.to_ascii_lowercase();
+
+    // Magnet
+    if lower.starts_with("magnet:") {
+        let _ = app.emit(
+            "mpv:source-loading",
+            SourceLoadingPayload {
+                phase: "connect".into(),
+                label: "Connecting to torrent…".into(),
+                progress: None,
+            },
+        );
+        let added = match ensure_streaming(&state, &app)?.add_magnet(&url) {
+            Ok(a) => a,
+            Err(e) => {
+                let _ = app.emit("mpv:source-loading-done", ());
+                return Err(e);
+            }
+        };
+        return load_torrent_into_playlist(&state, p, added, mode, &app);
+    }
+
+    // .torrent file path
+    if lower.ends_with(".torrent") && std::path::Path::new(&url).is_file() {
+        let _ = app.emit(
+            "mpv:source-loading",
+            SourceLoadingPayload {
+                phase: "connect".into(),
+                label: "Connecting to torrent…".into(),
+                progress: None,
+            },
+        );
+        let bytes = std::fs::read(&url).map_err(|e| format!("read .torrent: {e}"))?;
+        let added = match ensure_streaming(&state, &app)?.add_torrent_bytes(&bytes) {
+            Ok(a) => a,
+            Err(e) => {
+                let _ = app.emit("mpv:source-loading-done", ());
+                return Err(e);
+            }
+        };
+        return load_torrent_into_playlist(&state, p, added, mode, &app);
+    }
+
+    // Direct streams — drop old sources immediately before handing the URL to
+    // mpv, which replaces playback in the same command. The drop is safe here
+    // because there's no async gap between drop and loadfile.
+    let direct = ["http://", "https://", "rtsp://", "rtmp://", "rtmps://", "mms://", "file://"]
+        .iter()
+        .any(|s| lower.starts_with(s));
+    if direct {
+        if !append {
+            drop_previous_sources(state.inner());
+        }
+        return p.command(&["loadfile", &url, mode]);
+    }
+
+    Err(format!(
+        "unsupported source: {url} — expected http(s)/rtsp/rtmp/mms URL, magnet:, or .torrent path"
+    ))
+}
+
+/// Hand a fresh `AddedTorrent` to mpv as N playlist items. Blocks on
+/// `set_only_files` for the first file until rqbit is past its
+/// initial-checksum phase, then queues every video URL as a playlist entry.
+/// The first item respects the caller's `mode` (replace vs append-play);
+/// subsequent items are always append-play so we don't blow away the
+/// freshly-loaded first item.
+///
+/// CRITICAL: we BLOCK on `set_only_files` here. rqbit returns 500 for
+/// /update_only_files AND /stream/{idx} during its initial-checksum phase.
+/// set_only_files retries internally on 500, so its success is the
+/// "rqbit is now serving" gate before we issue loadfile.
+fn load_torrent_into_playlist(
+    state: &State<'_, AppState>,
+    p: &Player,
+    added: AddedTorrent,
+    mode: &str,
+    app: &AppHandle,
+) -> Result<(), String> {
+    if added.videos.is_empty() {
+        let _ = app.emit("mpv:source-loading-done", ());
+        return Err("torrent contained no playable video files".to_string());
+    }
+    crate::np_info!(
+        "cmd",
+        "torrent {} added: {} videos, queuing as playlist",
+        added.id,
+        added.videos.len()
+    );
+
+    // Temporarily put the new torrent in active_torrent (NOT torrent_ids yet)
+    // so the stats poller can emit live speed/peers to the overlay during the
+    // validation wait. We deliberately do NOT insert into torrent_ids here so
+    // that if we later need to drop_previous_sources, forget_all_torrents
+    // won't accidentally kill the torrent we just added.
+    if let Ok(mut g) = state.active_torrent.lock() {
+        *g = Some(crate::state::ActiveTorrentItem {
+            torrent_id: added.id,
+            file_idx: added.videos[0].idx,
+            prev_idx: None,
+        });
+    }
+
+    let _ = app.emit(
+        "mpv:source-loading",
+        SourceLoadingPayload {
+            phase: "connect".into(),
+            label: "Validating torrent pieces…".into(),
+            progress: None,
+        },
+    );
+
+    // Block until rqbit is past its initial-checksum phase. Returns Err after
+    // 120 s — long enough for even multi-GB torrents. The caller must NOT have
+    // called loadfile yet; if we bail here, the previous source is unaffected.
+    let first_idx = added.videos[0].idx;
+    if let Err(e) = ensure_streaming(state, app)?.set_only_files(added.id, &[first_idx]) {
+        crate::np_err!("rqbit", "set_only_files initial failed: {e}");
+        let _ = app.emit("mpv:source-loading-done", ());
+        // Clear the temporary active_torrent pointer we set above.
+        if let Ok(mut g) = state.active_torrent.lock() {
+            *g = None;
+        }
+        // Forget the new torrent from rqbit so it stops consuming bandwidth.
+        // We only forget added.id here — torrent_ids still holds the OLD
+        // torrents, so the currently-playing torrent stream keeps serving.
+        if let Ok(sess_guard) = state.streaming.lock() {
+            if let Some(sess) = sess_guard.as_ref() {
+                let _ = sess.forget(added.id);
+            }
+        }
+        return Err(e);
+    }
+
+    let _ = app.emit(
+        "mpv:source-loading",
+        SourceLoadingPayload {
+            phase: "buffer".into(),
+            label: "Buffering video…".into(),
+            progress: None,
+        },
+    );
+
+    // New source is validated and ready to play. NOW it is safe to drop the
+    // previous source: forget_all_torrents reads torrent_ids, which does NOT
+    // yet contain added.id, so the old torrent(s) are forgotten but the new
+    // one is untouched. archive_registry / active_archive_path are also reset.
+    if mode == "replace" {
+        drop_previous_sources(state.inner());
+    }
+
+    // Register the new torrent's metadata in state so the stats poller,
+    // prefetch hook (handle_torrent_advance), and shutdown can all find it.
+    if let Ok(mut ids) = state.torrent_ids.lock() {
+        ids.insert(added.id);
+    }
+    if let Ok(mut g) = state.torrent_video_idxs.lock() {
+        *g = added.videos.iter().map(|v| v.idx).collect();
+    }
+    if let Ok(mut g) = state.torrent_video_files.lock() {
+        *g = added.videos.iter()
+            .map(|v| (v.idx, v.stream_url.clone(), v.length))
+            .collect();
+    }
+
+    // First file uses caller's mode (replace OR append-play); the rest always
+    // append-play so they queue after the first regardless of mode.
+    p.command(&["loadfile", &added.videos[0].stream_url, mode])?;
+    for v in &added.videos[1..] {
+        p.command(&["loadfile", &v.stream_url, "append-play"])?;
+    }
+    Ok(())
+}
+
+/// Lazy rqbit spawn. Held under the AppState mutex; subsequent calls reuse
+/// the running session. `app` is forwarded to the session so its stdout
+/// drainer can emit init-progress events to the frontend.
+fn ensure_streaming<'a>(
+    state: &'a State<'_, AppState>,
+    app: &AppHandle,
+) -> Result<std::sync::MutexGuard<'a, Option<StreamingSession>>, String> {
+    let mut guard = state
+        .streaming
+        .lock()
+        .map_err(|e| format!("streaming lock: {e}"))?;
+    if guard.is_none() {
+        let exe = streaming::locate_rqbit().ok_or_else(|| {
+            "rqbit.exe not found in bin/ — installer must place it next to NewPlayer.exe"
+                .to_string()
+        })?;
+        let session =
+            StreamingSession::start(&exe, &streaming::session_dir(), app.clone())?;
+        *guard = Some(session);
+    }
+    // First-time setup: kick off the stats poller so the LoadingSourceOverlay
+    // gets live speed/peers/ETA every second. We do this here (not in
+    // StreamingSession::start) because the poller needs access to AppState's
+    // active_torrent / torrent_ids — those don't exist inside streaming.rs.
+    if !state.stats_poller_started.swap(true, Ordering::AcqRel) {
+        spawn_torrent_stats_poller(state, app);
+    }
+    // Re-borrow as a guard exposing the StreamingSession via the impl below.
+    // The guard's deref points into the Option; callers go through helpers.
+    Ok(guard)
+}
+
+/// Spawn a background thread that polls rqbit for live torrent stats once a
+/// second and forwards them to the frontend as `mpv:torrent-stats`. The
+/// active torrent (set by the events thread on file-loaded) is preferred;
+/// when no torrent is currently loaded but one was just added (we're still
+/// in the init phase before the first file-loaded event), we fall back to
+/// the first registered torrent ID. That's how the overlay gets live data
+/// during the validate-pieces window — exactly when the user most needs to
+/// see "yes, something is happening, here's the speed".
+fn spawn_torrent_stats_poller(state: &State<'_, AppState>, app: &AppHandle) {
+    let app = app.clone();
+    let streaming = state.streaming.clone();
+    let active = state.active_torrent.clone();
+    let torrent_ids = state.torrent_ids.clone();
+    std::thread::spawn(move || {
+        let mut idle_count = 0u32;
+        loop {
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        // Pick the torrent to poll: active first, fall back to any registered.
+        let id_opt: Option<u32> = {
+            let active_id = active
+                .lock()
+                .ok()
+                .and_then(|g| g.as_ref().map(|a| a.torrent_id));
+            active_id.or_else(|| {
+                torrent_ids
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.iter().next().copied())
+            })
+        };
+        if id_opt.is_none() {
+            idle_count += 1;
+            if idle_count > 60 { break; }  // exit after ~60s of no active torrent
+            continue;
+        } else {
+            idle_count = 0;
+        }
+        let Some(id) = id_opt else { continue };
+        // Hold the streaming lock briefly to issue the stats GET. The
+        // request itself takes ~10-30 ms locally; other commands wait for
+        // it but don't perceive the delay.
+        let stats = {
+            let guard = match streaming.lock() {
+                Ok(g) => g,
+                Err(_) => continue,
+            };
+            match guard.as_ref() {
+                Some(s) => s.get_stats(id),
+                None => continue,
+            }
+        };
+        match stats {
+            Ok(s) => {
+                let _ = app.emit("mpv:torrent-stats", s);
+            }
+            Err(e) => {
+                crate::np_debug!("rqbit", "stats poll failed: {e}");
+            }
+        }
+        } // end loop
+    });
+}
+
+// MutexGuard<Option<StreamingSession>> doesn't have add_magnet — convenience
+// trait so call sites stay readable.
+trait StreamingGuard {
+    fn add_magnet(&self, uri: &str) -> Result<AddedTorrent, String>;
+    fn add_torrent_bytes(&self, bytes: &[u8]) -> Result<AddedTorrent, String>;
+    fn set_only_files(&self, id: u32, idxs: &[usize]) -> Result<(), String>;
+}
+
+impl StreamingGuard for std::sync::MutexGuard<'_, Option<StreamingSession>> {
+    fn add_magnet(&self, uri: &str) -> Result<AddedTorrent, String> {
+        self.as_ref()
+            .ok_or_else(|| "streaming session vanished".to_string())?
+            .add_magnet(uri)
+    }
+    fn add_torrent_bytes(&self, bytes: &[u8]) -> Result<AddedTorrent, String> {
+        self.as_ref()
+            .ok_or_else(|| "streaming session vanished".to_string())?
+            .add_torrent_bytes(bytes)
+    }
+    fn set_only_files(&self, id: u32, idxs: &[usize]) -> Result<(), String> {
+        self.as_ref()
+            .ok_or_else(|| "streaming session vanished".to_string())?
+            .set_only_files(id, idxs)
+    }
+}
+
+/// Returns a window of up to `n` consecutive video file indices from the
+/// torrent's video index list, starting at `file_idx`. Used by both
+/// `handle_torrent_advance` (optimistic prefetch) and
+/// `try_recover_torrent_load` (on-demand recovery after a skip).
+fn torrent_sliding_window(state: &AppState, file_idx: usize, n: usize) -> Vec<usize> {
+    state
+        .torrent_video_idxs
+        .lock()
+        .ok()
+        .map(|g| {
+            let pos = g.iter().position(|&i| i == file_idx).unwrap_or(0);
+            g[pos..].iter().take(n).copied().collect()
+        })
+        .unwrap_or_else(|| vec![file_idx])
+}
+
+/// Best-effort prefetch nudge for the torrent the player just advanced to.
+/// Called from events.rs on FILE_LOADED. Marks the current + next 2 video
+/// files as "wanted" in rqbit so they are downloaded in priority order.
+/// The rest of the torrent is ignored until the user gets to it.
+///
+/// If the user skips past this window, events.rs EndFile error handler calls
+/// try_recover_torrent_load to widen the window and issue a loadfile-replace.
+pub fn handle_torrent_advance(state: &AppState, url: &str) {
+    let Some((torrent_id, file_idx)) = streaming::parse_stream_url(url) else {
+        // Not a torrent stream — clear active marker so prefetch doesn't
+        // misfire on the next event.
+        if let Ok(mut g) = state.active_torrent.lock() {
+            *g = None;
+        }
+        return;
+    };
+
+    // Track previous file for the active-torrent update below.
+    let prev = state
+        .active_torrent
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|a| {
+            (a.torrent_id == torrent_id).then_some(a.file_idx)
+        }));
+
+    // Mark the current video file plus the next two video files as wanted.
+    // Rqbit only downloads wanted files, so limiting the window means the
+    // rest of the torrent stays on disk once downloaded rather than wasting
+    // bandwidth on episodes the user may never watch.
+    //
+    // On-demand recovery: if the user skips past this window, events.rs
+    // EndFile error handler calls try_recover_torrent_load, which widens the
+    // window to include the skipped-to file and issues a loadfile-replace
+    // retry. This gives the "play any episode" guarantee without downloading
+    // the whole season upfront.
+    let wanted: Vec<usize> = torrent_sliding_window(
+        state,
+        file_idx,
+        3, // current + next 2
+    );
+
+    // Update active item before issuing the rqbit call so a fast follow-up
+    // event sees the right "prev_idx".
+    if let Ok(mut g) = state.active_torrent.lock() {
+        *g = Some(crate::state::ActiveTorrentItem {
+            torrent_id,
+            file_idx,
+            prev_idx: prev,
+        });
+    }
+
+    // Acquire the streaming lock briefly. If rqbit was forgotten between the
+    // event and now (unlikely), just skip silently.
+    let guard = match state.streaming.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            crate::np_warn!("rqbit", "streaming lock poisoned: {e}");
+            return;
+        }
+    };
+    if let Some(session) = guard.as_ref() {
+        if let Err(e) = session.set_only_files(torrent_id, &wanted) {
+            crate::np_warn!("rqbit", "prefetch set_only_files failed: {e}");
+        }
+    }
+}
+
+/// Called from events.rs EndFile error handler when mpv fails to load a
+/// torrent stream URL. This happens when the user skips to a video file that
+/// isn't in the current "wanted" window and rqbit refuses the stream.
+///
+/// Recovery: widens the wanted window to include the skipped-to file, then
+/// retries the load via `loadfile replace`. Shows a LoadingSourceOverlay so
+/// the user sees progress while rqbit prioritizes the new window.
+///
+/// Returns `true` if recovery was attempted (caller should suppress the
+/// normal mpv:eof error toast). Returns `false` for non-torrent URLs.
+pub fn try_recover_torrent_load(
+    state: &AppState,
+    app: &AppHandle,
+    failed_url: &str,
+) -> bool {
+    let Some((torrent_id, file_idx)) = streaming::parse_stream_url(failed_url) else {
+        return false;
+    };
+    // Only recover the currently-playing torrent. During torrent switch, the
+    // old torrent (T1) stays in torrent_ids while T2 initializes (120s wait),
+    // so checking torrent_ids would recover T1's EndFile errors, re-arm the
+    // overlay, and the overlay would never dismiss because T1 never plays again.
+    let is_active = state
+        .active_torrent
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|a| a.torrent_id == torrent_id))
+        .unwrap_or(false);
+    if !is_active {
+        return false;
+    }
+
+    let wanted = torrent_sliding_window(state, file_idx, 3);
+    let player = match state.player.as_ref() {
+        Some(p) => p.clone(),
+        None => return false,
+    };
+    let streaming = state.streaming.clone();
+    let app2 = app.clone();
+    let retry_url = failed_url.to_string();
+
+    std::thread::spawn(move || {
+        let _ = app2.emit(
+            "mpv:source-loading",
+            SourceLoadingPayload {
+                phase: "buffer".into(),
+                label: "Requesting pieces for this file…".into(),
+                progress: None,
+            },
+        );
+        let result = {
+            let guard = match streaming.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    let _ = app2.emit("mpv:source-loading-done", ());
+                    return;
+                }
+            };
+            guard.as_ref().map(|s| s.set_only_files(torrent_id, &wanted))
+        };
+        match result {
+            Some(Ok(_)) => {
+                // rqbit now accepts the stream; issue loadfile-replace.
+                // LoadingSourceOverlay auto-dismisses on time-pos > 0.3.
+                let _ = player.command(&["loadfile", &retry_url, "replace"]);
+            }
+            _ => {
+                let _ = app2.emit("mpv:source-loading-done", ());
+            }
+        }
+    });
+    true
+}
+
+/// Forget every torrent ID we've added in this session. Best-effort —
+/// individual failures are logged. Called from app shutdown so rqbit's
+/// session is empty when the sidecar process is killed.
+pub fn forget_all_torrents(state: &AppState) {
+    let ids: Vec<u32> = state
+        .torrent_ids
+        .lock()
+        .ok()
+        .map(|g| g.iter().copied().collect())
+        .unwrap_or_default();
+    if ids.is_empty() {
+        return;
+    }
+    let guard = match state.streaming.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    if let Some(session) = guard.as_ref() {
+        for id in &ids {
+            let _ = session.forget(*id);
+        }
+    }
+}
+
+/// Drop every previously-loaded source so a new replace-mode load starts
+/// from a clean slate:
+///   - rqbit `forget` for every tracked torrent ID (stops their downloads)
+///   - clear `state.torrent_ids` so the next add starts the set fresh
+///   - clear `state.active_torrent` (the prefetch hook reads this)
+///   - clear the archive registry + active_archive_path
+///
+/// Without this, opening a 2nd magnet/archive while a 1st was still going
+/// leaves the 1st downloading in the background AND racing the new one
+/// for rqbit's lock — which manifests as the new file showing endless
+/// "loading" while the old torrent keeps eating bandwidth.
+pub fn drop_previous_sources(state: &AppState) {
+    forget_all_torrents(state);
+    if let Ok(mut g) = state.torrent_ids.lock() {
+        g.clear();
+    }
+    if let Ok(mut g) = state.active_torrent.lock() {
+        *g = None;
+    }
+    if let Ok(mut g) = state.torrent_video_idxs.lock() {
+        g.clear();
+    }
+    if let Ok(mut g) = state.torrent_video_files.lock() {
+        g.clear();
+    }
+    if let Ok(mut g) = state.archive_registry.lock() {
+        *g = crate::archive::ArchiveRegistry::new();
+    }
+    if let Ok(mut g) = state.active_archive_path.lock() {
+        *g = None;
+    }
+    // Run cache eviction in the background after dropping sources so rqbit
+    // is no longer writing to the session dir before we start deleting.
+    let limit = state.cache_limit_bytes.load(Ordering::Relaxed);
+    if limit > 0 {
+        std::thread::spawn(move || streaming::run_cache_eviction(limit));
+    }
+}
+
+/// Persist the user's torrent cache size limit and immediately run an
+/// eviction pass against the session directory.
+#[tauri::command]
+pub fn set_torrent_cache_limit(state: State<'_, AppState>, bytes: u64) {
+    state.cache_limit_bytes.store(bytes, Ordering::Relaxed);
+    if bytes > 0 {
+        std::thread::spawn(move || streaming::run_cache_eviction(bytes));
+    }
+}
+
+// ── Archive sources: .zip / .7z / .rar ──────────────────────────────────────
+
+/// Open an archive file, surface every video entry as a playlist item, and
+/// extract entry 0 synchronously so playback can start immediately. Entry 1+
+/// are extracted lazily — the events handler watches `mpv:file-loaded` for
+/// archive-cache paths and kicks the next prefetch (and runs LRU eviction).
+///
+/// `append=true` queues into the existing playlist; `false` replaces it.
+///
+/// Async for the same reason as `open_source`: archive enumeration over a
+/// multi-GB zip can take several seconds (the underlying crate reads the
+/// whole central directory), and the first-entry extract is synchronous.
+/// Running on the main thread would freeze the window during that wait.
+#[tauri::command]
+pub async fn open_archive(
+    url: String,
+    append: bool,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    crate::np_info!("cmd", "open_archive path={} append={}", url, append);
+    let p = player_ref(&state)?;
+    let mode = if append { "append-play" } else { "replace" };
+
+    // Same housekeeping as open_source: a replace-mode archive open should
+    // stop any previously-running torrents and drop the prior archive
+    // registry so its cache files become reclaimable.
+    if !append {
+        drop_previous_sources(state.inner());
+    }
+
+    let path = Path::new(&url);
+    if !path.is_file() {
+        return Err(format!("archive not found: {url}"));
+    }
+
+    // Open + enumerate (cheap: central directory only, no extraction).
+    let handle = Arc::new(archive::open_archive(path)?);
+
+    // Sync-extract entry 0 so the first loadfile resolves immediately. The
+    // overlay covers the wait visually — we emit progress phases here.
+    let _ = app.emit(
+        "mpv:source-loading",
+        SourceLoadingPayload {
+            phase: "extract".into(),
+            label: format!(
+                "Extracting {}",
+                handle.entries[0].rel_path.display()
+            ),
+            progress: None,
+        },
+    );
+    let first_path = archive::ensure_entry(&handle, 0)?;
+    {
+        // Bind the first path so LRU never evicts what's about to play.
+        if let Ok(mut s) = handle.active_paths.lock() {
+            s.insert(first_path.clone());
+        }
+    }
+    let _ = app.emit("mpv:source-loading-done", ());
+
+    // Register so the events-side handlers can find the right archive when
+    // mpv loads / fails-to-load a cache path.
+    if let Ok(mut reg) = state.archive_registry.lock() {
+        reg.register(handle.clone());
+    }
+
+    // First file uses caller's mode; rest queue with append-play. Same
+    // pattern as the torrent path so user-visible behavior is consistent.
+    p.command(&["loadfile", &path_to_mpv_string(&first_path), mode])?;
+    for entry in handle.entries.iter().skip(1) {
+        let p2 = handle.cache_dir.join(&entry.rel_path);
+        p.command(&[
+            "loadfile",
+            &path_to_mpv_string(&p2),
+            "append-play",
+        ])?;
+    }
+
+    // Background prefetch of entry 1 so the natural advance is seamless.
+    if handle.entries.len() > 1 {
+        let bg = handle.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = archive::ensure_entry(&bg, 1) {
+                crate::np_warn!("archive", "prefetch idx=1 failed: {e}");
+            }
+        });
+    }
+    Ok(())
+}
+
+/// mpv-friendly stringification of a Path. Forward slashes for portability
+/// (libavformat parses both, but `\` triggers the option-list parser if the
+/// path lands inside a chained command).
+fn path_to_mpv_string(p: &Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceLoadingPayload {
+    pub phase: String, // "extract" | "connect" | "buffer"
+    pub label: String,
+    pub progress: Option<f64>, // 0..1, or null for indeterminate
+}
+
+/// Events-side helper, called from `mpv:file-loaded`. If the new path is
+/// inside a registered archive, marks it as the active cache path,
+/// removes the previous active marker, and kicks prefetch for the next
+/// entry. Returns silently for non-archive paths.
+pub fn handle_archive_advance(state: &AppState, path_str: &str) {
+    let path = PathBuf::from(path_str);
+    let handle = match state
+        .archive_registry
+        .lock()
+        .ok()
+        .and_then(|r| r.lookup_by_path(&path))
+    {
+        Some(h) => h,
+        None => {
+            // Not an archive cache path → nothing to do, but clear stale
+            // marker so the next archive load starts cleanly.
+            if let Ok(mut g) = state.active_archive_path.lock() {
+                *g = None;
+            }
+            return;
+        }
+    };
+    // Update active-paths set: remove previous, add current.
+    let prev = state
+        .active_archive_path
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
+    if let Ok(mut s) = handle.active_paths.lock() {
+        if let Some(p) = prev.as_ref() {
+            s.remove(p);
+        }
+        s.insert(path.clone());
+    }
+    if let Ok(mut g) = state.active_archive_path.lock() {
+        *g = Some(path.clone());
+    }
+    // Find idx of the just-loaded entry and prefetch idx+1 in the
+    // background. idx is the position in handle.entries (sorted by name)
+    // not the archive's internal index — both archive backends look up by
+    // rel_path, so the sorted order is what we walk.
+    let idx = handle
+        .entries
+        .iter()
+        .position(|e| handle.cache_dir.join(&e.rel_path) == path);
+    if let Some(i) = idx {
+        if i + 1 < handle.entries.len() {
+            let bg = handle.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = archive::ensure_entry(&bg, i + 1) {
+                    crate::np_warn!("archive", "prefetch idx={} failed: {e}", i + 1);
+                }
+                if let Ok(mut s) = bg.active_paths.lock() {
+                    s.insert(bg.cache_dir.join(&bg.entries[i + 1].rel_path));
+                }
+            });
+        }
+    }
+}
+
+/// Events-side helper for the on-demand recovery path. Called when mpv
+/// emits EndFile-error and we suspect the failed path is an archive cache
+/// entry that hasn't been extracted yet (manual playlist skip past the
+/// prefetch window). Extracts the entry off-thread, then asks mpv to retry
+/// via `loadfile replace` so the user sees a brief stall, then playback.
+pub fn try_recover_archive_load(
+    state: &AppState,
+    app: &AppHandle,
+    failed_path: &str,
+) -> bool {
+    let path = PathBuf::from(failed_path);
+    let handle = match state
+        .archive_registry
+        .lock()
+        .ok()
+        .and_then(|r| r.lookup_by_path(&path))
+    {
+        Some(h) => h,
+        None => return false,
+    };
+    // Map the failed path back to an entry idx.
+    let idx = match handle
+        .entries
+        .iter()
+        .position(|e| handle.cache_dir.join(&e.rel_path) == path)
+    {
+        Some(i) => i,
+        None => return false,
+    };
+    let player = match state.player.as_ref() {
+        Some(p) => p.clone(),
+        None => return false,
+    };
+    let app2 = app.clone();
+    std::thread::spawn(move || {
+        let _ = app2.emit(
+            "mpv:source-loading",
+            SourceLoadingPayload {
+                phase: "extract".into(),
+                label: format!(
+                    "Extracting {}",
+                    handle.entries[idx].rel_path.display()
+                ),
+                progress: None,
+            },
+        );
+        match archive::ensure_entry(&handle, idx) {
+            Ok(extracted) => {
+                if let Ok(mut s) = handle.active_paths.lock() {
+                    s.insert(extracted.clone());
+                }
+                let _ = app2.emit("mpv:source-loading-done", ());
+                let _ = player.command(&[
+                    "loadfile",
+                    &path_to_mpv_string(&extracted),
+                    "replace",
+                ]);
+            }
+            Err(e) => {
+                let _ = app2.emit("mpv:source-loading-done", ());
+                crate::np_warn!("archive", "on-demand extract idx={} failed: {e}", idx);
+            }
+        }
+    });
+    true
+}
+
+
+/// Toggle the larger demuxer cache used for network sources. Called by the
+/// frontend on `mpv:file-loaded` after detecting a non-file URL — mpv
+/// resets these on every loadfile, so they have to be re-applied per file.
+///
+/// For streams we lean aggressive:
+///   * cache-secs=60: pre-buffer 60s so a forward seek inside that window
+///     plays without re-fetching.
+///   * demuxer-max-bytes=256MiB: enough headroom for 1080p so the cache
+///     doesn't trim aggressively.
+///   * cache-on-disk=yes: spool to a memory-mapped tmp file instead of
+///     burning RAM. mpv handles this automatically — keeps RSS low even
+///     with a giant cache.
+///   * demuxer-readahead-secs=15: how far ahead the demuxer races even if
+///     the cache budget allows more.
+///   * cache-pause-initial=no: don't make the user wait for the cache to
+///     fill before showing the first frame. Cuts start latency by ~1s.
+#[tauri::command]
+pub fn set_stream_cache(enabled: bool, state: State<'_, AppState>) -> Result<(), String> {
+    let p = player_ref(&state)?;
+    if enabled {
+        p.set_string_prop_pub("cache-secs", "60")?;
+        p.set_string_prop_pub("demuxer-max-bytes", "256MiB")?;
+        let _ = p.set_string_prop_pub("cache-on-disk", "yes");
+        let _ = p.set_string_prop_pub("demuxer-readahead-secs", "15");
+        let _ = p.set_string_prop_pub("cache-pause-initial", "no");
+    } else {
+        p.set_string_prop_pub("cache-secs", "5")?;
+        p.set_string_prop_pub("demuxer-max-bytes", "10MiB")?;
+        let _ = p.set_string_prop_pub("cache-on-disk", "no");
+    }
+    Ok(())
+}
+
+// ── UI dormancy (idle WebView hide) ─────────────────────────────────────────
+
+/// Mark the UI as dormant: hide the WebView2 child window and flip the flag
+/// the mpv event loop reads. Intended for "user has been idle while playing
+/// fullscreen" — the WebView stops compositing, Page Visibility throttles
+/// JS rAF, and only mpv keeps painting. Wake via the `ui:wake` event from
+/// the events module (or an explicit `ui_wake` invoke for JS-driven cases).
+#[tauri::command]
+pub fn ui_dormant(state: State<'_, AppState>) -> Result<(), String> {
+    state.ui.is_dormant.store(true, Ordering::Relaxed);
+    if let Some(h) = state.ui.webview_hwnd_value() {
+        crate::hide_webview(h);
+    }
+    crate::np_info!("ui", "dormant (JS request)");
+    Ok(())
+}
+
+/// Explicit JS-driven wake. Same effect as the events-module path that fires
+/// on mpv input — used for cases where JS wants to come back without waiting
+/// for a mouse move (e.g. `mpv:cli-file` arrival, dialog open via keyboard
+/// shortcut bound at the OS level).
+#[tauri::command]
+pub fn ui_wake(state: State<'_, AppState>) -> Result<(), String> {
+    state.ui.is_dormant.store(false, Ordering::Relaxed);
+    if let Some(h) = state.ui.webview_hwnd_value() {
+        crate::show_webview(h);
+    }
+    crate::np_info!("ui", "wake (JS request)");
+    Ok(())
 }
 
 // ── Picture-in-Picture ───────────────────────────────────────────────────────

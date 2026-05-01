@@ -21,6 +21,7 @@ interface Props {
   chapters?: Chapter[];
   size?: SeekBarSize;
   markerStyle?: ChapterMarkerStyle;
+  showThumbnails?: boolean;
 }
 
 // Idle period before we ask the backend for a dense window. Short enough to
@@ -56,6 +57,7 @@ export default function Timeline({
   chapters,
   size = "medium",
   markerStyle = "gap",
+  showThumbnails = true,
 }: Props) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState(false);
@@ -253,7 +255,7 @@ export default function Timeline({
             exit={{ opacity: 0, y: 4 }}
             transition={{ duration: 0.1 }}
           >
-            {denseSrc ? (
+            {showThumbnails && denseSrc ? (
               <img
                 src={denseSrc}
                 alt=""
@@ -262,7 +264,7 @@ export default function Timeline({
                 draggable={false}
               />
             ) : (
-              thumbStyle && (
+              showThumbnails && thumbStyle && (
                 <div
                   className="rounded-md overflow-hidden border border-white/15 shadow-xl bg-black/60"
                   style={thumbStyle}

@@ -1,12 +1,5 @@
 import { motion } from "framer-motion";
-import {
-  ChevronRight,
-  Image as ImageIcon,
-  Frame,
-  Sun,
-  Sparkles,
-  Wind,
-} from "lucide-react";
+import { ChevronRight, Globe, Palette, Settings2 } from "lucide-react";
 import type { SettingsPage } from "../../types";
 import { BackHeader, ToggleRow, pageVariants, pageTransition } from "./shared";
 
@@ -18,45 +11,13 @@ interface Props {
   onBack: () => void;
 }
 
-const ENTRIES: {
-  page: SettingsPage;
-  icon: React.ReactNode;
-  label: string;
-  desc: string;
-}[] = [
-  {
-    page: "video_hdr",
-    icon: <Sun className="w-3.5 h-3.5 text-white/60 mt-0.5" />,
-    label: "HDR",
-    desc: "How HDR signals are sent to your display",
-  },
-  {
-    page: "video_upscaling",
-    icon: <Sparkles className="w-3.5 h-3.5 text-white/60 mt-0.5" />,
-    label: "Upscaling",
-    desc: "Sharper detail on lower-res videos",
-  },
-  {
-    page: "video_interp",
-    icon: <Wind className="w-3.5 h-3.5 text-white/60 mt-0.5" />,
-    label: "Frame Smoothing",
-    desc: "Smooth out motion + VSync",
-  },
-  {
-    page: "video_image",
-    icon: <ImageIcon className="w-3.5 h-3.5 text-white/60 mt-0.5" />,
-    label: "Image Adjustments",
-    desc: "Brightness, contrast, saturation, gamma, hue",
-  },
-  {
-    page: "video_adjust",
-    icon: <Frame className="w-3.5 h-3.5 text-white/60 mt-0.5" />,
-    label: "Aspect, Zoom & Rotate",
-    desc: "Frame the picture",
-  },
-];
-
-export default function VideoMainPage({ direction, deinterlace, onDeinterlaceToggle, onNavigate, onBack }: Props) {
+export default function VideoMainPage({
+  direction,
+  deinterlace,
+  onDeinterlaceToggle,
+  onNavigate,
+  onBack,
+}: Props) {
   return (
     <motion.div
       key="video_main"
@@ -70,24 +31,59 @@ export default function VideoMainPage({ direction, deinterlace, onDeinterlaceTog
       <BackHeader label="Video" onClick={onBack} />
 
       <div className="px-1 py-1">
-        {ENTRIES.map((e) => (
-          <button
-            key={e.page}
-            className="w-full flex items-center justify-between px-3 py-2.5
-                       text-sm text-white/90 rounded-lg hover:bg-white/10 cursor-pointer
-                       transition-colors duration-100"
-            onClick={() => onNavigate(e.page)}
-          >
-            <span className="flex items-start gap-2">
-              {e.icon}
-              <span className="flex flex-col items-start">
-                <span>{e.label}</span>
-                <span className="text-[9px] text-white/40 mt-0.5">{e.desc}</span>
+        <button
+          className="w-full flex items-center justify-between px-3 py-2.5
+                     text-sm text-white/90 rounded-lg hover:bg-white/10 cursor-pointer
+                     transition-colors duration-100"
+          onClick={() => onNavigate("video_source")}
+        >
+          <span className="flex items-start gap-2">
+            <Globe className="w-3.5 h-3.5 text-white/60 mt-0.5" />
+            <span className="flex flex-col items-start">
+              <span>Source</span>
+              <span className="text-[9px] text-white/40 mt-0.5">
+                Local file, magnet, .torrent, stream, archive
               </span>
             </span>
-            <ChevronRight className="w-3.5 h-3.5 text-white/50 shrink-0" />
-          </button>
-        ))}
+          </span>
+          <ChevronRight className="w-3.5 h-3.5 text-white/50 shrink-0" />
+        </button>
+
+        <button
+          className="w-full flex items-center justify-between px-3 py-2.5
+                     text-sm text-white/90 rounded-lg hover:bg-white/10 cursor-pointer
+                     transition-colors duration-100"
+          onClick={() => onNavigate("video_appearance")}
+        >
+          <span className="flex items-start gap-2">
+            <Palette className="w-3.5 h-3.5 text-white/60 mt-0.5" />
+            <span className="flex flex-col items-start">
+              <span>Appearance</span>
+              <span className="text-[9px] text-white/40 mt-0.5">
+                Image adjustments, aspect, zoom & rotate
+              </span>
+            </span>
+          </span>
+          <ChevronRight className="w-3.5 h-3.5 text-white/50 shrink-0" />
+        </button>
+
+        <button
+          className="w-full flex items-center justify-between px-3 py-2.5
+                     text-sm text-white/90 rounded-lg hover:bg-white/10 cursor-pointer
+                     transition-colors duration-100"
+          onClick={() => onNavigate("video_quality")}
+        >
+          <span className="flex items-start gap-2">
+            <Settings2 className="w-3.5 h-3.5 text-white/60 mt-0.5" />
+            <span className="flex flex-col items-start">
+              <span>Quality</span>
+              <span className="text-[9px] text-white/40 mt-0.5">
+                HDR, upscaling, frame smoothing
+              </span>
+            </span>
+          </span>
+          <ChevronRight className="w-3.5 h-3.5 text-white/50 shrink-0" />
+        </button>
 
         <div className="border-t border-white/8 mt-1 pt-1">
           <ToggleRow

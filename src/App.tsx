@@ -30,6 +30,10 @@ import ControlBar, {
 } from "./components/ControlBar";
 import JumpToTimeDialog from "./components/JumpToTimeDialog";
 import MediaInfoDialog from "./components/MediaInfoDialog";
+import OpenSourceDialog from "./components/OpenSourceDialog";
+import LoadingSourceOverlay from "./components/LoadingSourceOverlay";
+import BufferingBanner from "./components/BufferingBanner";
+import RecentSourcesPanel from "./components/RecentSourcesPanel";
 import { ACCENT_PALETTE, DENSE_LRU_MAX, denseBucket } from "./components/types";
 import { log } from "./lib/log";
 import PlaylistPanel from "./components/PlaylistPanel";
@@ -43,6 +47,16 @@ import PipBar from "./components/PipBar";
 
 type TrackList = { audio: Track[]; subtitle: Track[] };
 
+/** True when the loaded path is a URL (rqbit stream endpoint, direct http/rtsp/rtmp/mms).
+ * Network sources get a larger demuxer cache and skip local thumbnail extraction. */
+function isNetworkPath(path: string): boolean {
+  if (!path) return false;
+  const l = path.toLowerCase();
+  return ["http://", "https://", "rtsp://", "rtmp://", "rtmps://", "mms://"].some(
+    (p) => l.startsWith(p)
+  );
+}
+
 const DEFAULT_DYNAMIC_AUDIO: DynamicAudioState = {
   enabled: false,
   minDb: -30,
@@ -50,6 +64,11 @@ const DEFAULT_DYNAMIC_AUDIO: DynamicAudioState = {
 };
 
 const HIDE_DELAY_MS = 2000;
+// Time after controls auto-hide before we tell Rust to hide the WebView2
+// host window entirely. While dormant: WebView stops compositing, JS rAF
+// throttles to ~1 Hz under Page Visibility, mpv keeps painting. Wake-up
+// arrives via the `ui:wake` event from Rust when mpv detects mouse input.
+const DORMANCY_DELAY_MS = 4000;
 
 export default function App() {
   const [hasFile, setHasFile] = useState(false);
@@ -135,7 +154,20 @@ export default function App() {
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
   const [jumpToTimeOpen, setJumpToTimeOpen] = useState(false);
   const [mediaInfoOpen, setMediaInfoOpen] = useState(false);
+  const [openSourceOpen, setOpenSourceOpen] = useState(false);
+  const [recentPanelOpen, setRecentPanelOpen] = useState(false);
+  // Buffering visibility is owned by BufferingBanner (it listens to
+  // mpv:paused-for-cache + mpv:torrent-stats itself), so App.tsx no longer
+  // needs the bufferingForCache state — kept as a no-op here only because
+  // some places still call setBufferingForCache(false) on file-load reset
+  // and removing those would leak into unrelated diffs.
+  const [, setBufferingForCache] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isLocalFile, setIsLocalFile] = useState(false);
+  const [isSeeking, setIsSeeking] = useState(false);
+  const isSeekingRef = useRef(false);
+  const isLoadingRef = useRef(false);
+  const seekIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
@@ -145,8 +177,11 @@ export default function App() {
   // True once persistent settings have been loaded — prevents the initial
   // default state from clobbering the saved values via the auto-save effects.
   const storeLoadedRef = useRef(false);
+  const [storeLoaded, setStoreLoaded] = useState(false);
 
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dormancyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isDormantRef = useRef(false);
   const seekTargetRef = useRef<number | null>(null);
   const durationRef = useRef(0);
   const isPlayingRef = useRef(false);
@@ -174,6 +209,8 @@ export default function App() {
   useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
   useEffect(() => { abLoopARef.current = abLoopA; }, [abLoopA]);
   useEffect(() => { abLoopBRef.current = abLoopB; }, [abLoopB]);
+  useEffect(() => { isSeekingRef.current = isSeeking; }, [isSeeking]);
+  useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
 
   // ── mpv event subscriptions ─────────────────────────────────────────────────
   useEffect(() => {
@@ -186,7 +223,15 @@ export default function App() {
         const target = seekTargetRef.current;
         if (target !== null) {
           if (Math.abs(t - target) < 0.5) {
+            // time-pos arrived at the seek target — frame is decoded.
+            // Dismiss the spinner here as a fallback for paused seeks
+            // (mpv:playback-restart may not fire when staying paused).
             seekTargetRef.current = null;
+            if (seekIndicatorTimerRef.current) {
+              clearTimeout(seekIndicatorTimerRef.current);
+              seekIndicatorTimerRef.current = null;
+            }
+            setIsSeeking(false);
           } else {
             return;
           }
@@ -197,10 +242,31 @@ export default function App() {
       })
     );
 
+    // mpv fires playback-restart when a new frame is decoded and ready to
+    // display — after seeks (playing or paused), after buffering, after pause.
+    // This is the primary "frame is ready" signal to dismiss the seek spinner.
+    unlisteners.push(
+      listen<unknown>("mpv:playback-restart", () => {
+        if (seekIndicatorTimerRef.current) {
+          clearTimeout(seekIndicatorTimerRef.current);
+          seekIndicatorTimerRef.current = null;
+        }
+        seekTargetRef.current = null;
+        setIsSeeking(false);
+      })
+    );
+
     unlisteners.push(
       listen<number>("mpv:duration", (e) => {
         log.info("events", `mpv:duration ${e.payload.toFixed(3)}s`);
         setDuration(e.payload);
+        // Duration > 0 means mpv has demuxed enough to know the file's
+        // length — that's our "playback is real" signal. Drop the
+        // loading splash here instead of on file-loaded, because
+        // file-loaded for a torrent stream fires while pieces are still
+        // being fetched and the controls are functionally dead until
+        // the demuxer catches up.
+        if (e.payload > 0) clearLoadingState();
       })
     );
     unlisteners.push(
@@ -230,9 +296,26 @@ export default function App() {
     );
 
     unlisteners.push(
-      listen<null>("mpv:eof", () => {
-        log.info("events", "mpv:eof");
+      listen<{
+        reason: number;
+        error: number;
+        is_error: boolean;
+      }>("mpv:eof", (e) => {
+        const { reason, error, is_error } = e.payload;
+        log.info("events", `mpv:eof reason=${reason} error=${error}`);
         setIsPlaying(false);
+        if (!is_error) return;
+
+        clearLoadingState();
+        setBufferingForCache(false);
+
+        setError(
+          error === -13 || error === -14
+            ? "Network error: couldn't connect to the source"
+            : error === -16
+            ? "Unsupported format or codec from this URL"
+            : `Playback failed (mpv error ${error})`
+        );
       })
     );
 
@@ -347,8 +430,11 @@ export default function App() {
     unlisteners.push(
       listen<string>("mpv:file-loaded", (e) => {
         log.info("events", `mpv:file-loaded path=${e.payload}`);
-        // mpv has loaded the file; first frame is imminent. Drop the splash.
-        clearLoadingState();
+        // mpv has accepted the URL. For local files this is also the
+        // moment first-frame is imminent so the splash COULD drop here,
+        // but for network sources (torrents in particular) demux often
+        // takes 10-30 s more for pieces to land. The mpv:duration > 0
+        // listener does the actual splash-clear once playback is real.
         setHasFile(true);
         setProgress(0);
         setCurrentTime(0);
@@ -358,12 +444,25 @@ export default function App() {
         setDenseTick((n) => (n + 1) | 0);
         setAbLoopA(null);
         setAbLoopB(null);
+        setBufferingForCache(false);
         // Re-apply af chain + subtitle + image params + video state.
         reapplyForCurrentFileRef.current?.();
         // Kick thumbnailer on the freshly loaded path. The auto-advance
-        // path needs this — direct loadPath does it itself.
+        // path needs this — direct loadPath does it itself. Skip when
+        // streaming over the network — local thumbnails on a torrent
+        // stream would just hammer rqbit's range endpoints.
         const path = e.payload;
-        if (path) {
+        const isNetwork = isNetworkPath(path);
+        // mpv's cache resets to the init defaults on every loadfile, so
+        // streaming sources need their bigger window re-applied per file.
+        invoke("set_stream_cache", { enabled: isNetwork }).catch(() => {});
+        // Hover-preview thumbnails: local disk files only. Network sources
+        // (http/https CDN, rqbit's 127.0.0.1 stream) skip thumbnailing —
+        // range-spamming a torrent sidecar tanks playback and CDN URLs
+        // don't need local seek previews.
+        const isLocal = path.length > 0 && !isNetwork;
+        setIsLocalFile(isLocal);
+        if (isLocal) {
           invoke("start_thumbnailing", { path }).catch(() => {});
         }
       })
@@ -371,6 +470,12 @@ export default function App() {
 
     unlisteners.push(
       listen<boolean>("mpv:power-state", (e) => setOnBattery(e.payload))
+    );
+
+    unlisteners.push(
+      listen<boolean>("mpv:paused-for-cache", (e) => {
+        setBufferingForCache(e.payload);
+      })
     );
 
     // Backend re-applied a profile (Auto switched as battery flipped).
@@ -392,8 +497,48 @@ export default function App() {
     };
   }, []);
 
+  // Rehydrate React state from mpv on mount. Without this, a Ctrl+R or
+  // refresh-button reload leaves mpv playing while React thinks no file
+  // is loaded — buffering overlay stops gating, seek can no-op against
+  // hasFile=false guards, etc. Listeners are already set up by the
+  // previous useEffect; this just seeds the initial state once.
+  useEffect(() => {
+    type PlayerStateSnapshot = {
+      path: string;
+      paused: boolean;
+      timePos: number;
+      duration: number;
+      volume: number;
+      speed: number;
+      playlistPos: number;
+      playlist: PlaylistItem[];
+      tracks: { audio: Track[]; subtitle: Track[] };
+    };
+    invoke<PlayerStateSnapshot>("get_player_state")
+      .then((s) => {
+        if (!s.path) return; // Nothing loaded — fresh boot, normal path.
+        log.info("rehydrate", `path=${s.path} timePos=${s.timePos.toFixed(1)} dur=${s.duration.toFixed(1)}`);
+        setHasFile(true);
+        setIsPlaying(!s.paused);
+        setCurrentTime(s.timePos);
+        setDuration(s.duration);
+        if (s.duration > 0) setProgress((s.timePos / s.duration) * 100);
+        setVolume(Math.round(s.volume));
+        setPlaybackSpeed(s.speed);
+        setPlaylist(s.playlist);
+        setAudioTracks(s.tracks.audio);
+        setSubtitleTracks(s.tracks.subtitle);
+        const selA = s.tracks.audio.find((t) => t.selected);
+        setSelectedAudio(selA ? String(selA.id) : "auto");
+        const selS = s.tracks.subtitle.find((t) => t.selected);
+        setSelectedSub(selS ? String(selS.id) : "no");
+      })
+      .catch((e) => log.warn("rehydrate", `get_player_state failed: ${e}`));
+  }, []);
+
   // Drag & drop — load first file, append the rest to the playlist.
   useEffect(() => {
+    let active = true;
     let unlisten: (() => void) | null = null;
     getCurrentWindow()
       .onDragDropEvent((event) => {
@@ -412,9 +557,15 @@ export default function App() {
           }
         }
       })
-      .then((fn) => { unlisten = fn; })
+      .then((fn) => {
+        if (active) unlisten = fn;
+        else fn();
+      })
       .catch(() => {});
-    return () => { unlisten?.(); };
+    return () => {
+      active = false;
+      unlisten?.();
+    };
   }, []);
 
   // ── persistent settings ─────────────────────────────────────────────────────
@@ -481,10 +632,16 @@ export default function App() {
           setPipMode(true);
           invoke("enter_pip").catch(() => {});
         }
+        const savedCacheLimit = await s.get<number>("torrentCacheLimitBytes");
+        if (typeof savedCacheLimit === "number" && savedCacheLimit > 0 && !cancelled) {
+          invoke("set_torrent_cache_limit", { bytes: savedCacheLimit }).catch(() => {});
+        }
+        // (cookies/quality settings removed — yt-dlp support dropped)
       } catch (e) {
         console.warn("[TracePlayer] settings store failed to load:", e);
       } finally {
         storeLoadedRef.current = true;
+        setStoreLoaded(true);
       }
     })();
     return () => { cancelled = true; };
@@ -606,7 +763,7 @@ export default function App() {
   // changes go through the per-handler invokes; this initial sync handles
   // the cold-start case where the file may load before any handler fires.
   useEffect(() => {
-    if (!storeLoadedRef.current) return;
+    if (!storeLoaded) return;
     invoke("set_perf_profile", { profile: perfProfile })
       .then((resolved) => {
         const r = resolved as ResolvedPerf | null;
@@ -629,7 +786,7 @@ export default function App() {
     // Audio FX is independent of perf profile.
     pushAudioFx(audioFx, monoAudio, dynamicAudio);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeLoadedRef.current]);
+  }, [storeLoaded]);
 
   // ── auto-hide controls ──────────────────────────────────────────────────────
   const clearHideTimer = useCallback(() => {
@@ -691,6 +848,57 @@ export default function App() {
     [clearHideTimer, scheduleHide]
   );
 
+  // ── WebView dormancy ────────────────────────────────────────────────────────
+  // After controls auto-hide, schedule a deeper sleep where the WebView host
+  // window is removed entirely (mpv keeps rendering). Any panel open, dialog
+  // open, or pause cancels the scheduled dormancy. Wake-up arrives via the
+  // `ui:wake` event when Rust sees a MOUSE_MOVE / click / wheel from mpv.
+  const clearDormancyTimer = useCallback(() => {
+    if (dormancyTimerRef.current) {
+      clearTimeout(dormancyTimerRef.current);
+      dormancyTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    clearDormancyTimer();
+    if (showControls) return;
+    if (!isPlayingRef.current) return;
+    if (subtitlePanelOpen || playlistOpen || jumpToTimeOpen || mediaInfoOpen) return;
+    if (pipMode) return;
+    dormancyTimerRef.current = setTimeout(() => {
+      isDormantRef.current = true;
+      invoke("ui_dormant").catch(() => {});
+    }, DORMANCY_DELAY_MS);
+    return clearDormancyTimer;
+  }, [
+    showControls,
+    subtitlePanelOpen,
+    playlistOpen,
+    jumpToTimeOpen,
+    mediaInfoOpen,
+    pipMode,
+    clearDormancyTimer,
+  ]);
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    listen("ui:wake", () => {
+      if (!isDormantRef.current) return;
+      isDormantRef.current = false;
+      setShowControls(true);
+      scheduleHide();
+    }).then((fn) => {
+      if (active) unlisten = fn;
+      else fn(); // effect already cleaned up, immediately unlisten
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [scheduleHide]);
+
   // ── fullscreen ──────────────────────────────────────────────────────────────
   const toggleFullscreen = useCallback(async () => {
     try {
@@ -738,7 +946,7 @@ export default function App() {
   const seekRelative = useCallback((delta: number) => {
     if (!hasFileRef.current) return;
     log.info("seek", `relative delta=${delta}s`);
-    invoke("seek", { seconds: delta, mode: "relative" }).catch((e) => setError(String(e)));
+    invoke("seek", { seconds: delta, mode: "relative" }).catch(() => {});
   }, []);
 
   // Hover-driven dense thumbnail request. Timeline debounces, so this is
@@ -765,7 +973,7 @@ export default function App() {
     setCurrentTime(seconds);
     setProgress(pct);
     log.info("seek", `absolute pct=${pct.toFixed(2)}% t=${seconds.toFixed(3)}s`);
-    invoke("seek", { seconds, mode: "absolute" }).catch((e) => setError(String(e)));
+    invoke("seek", { seconds, mode: "absolute" }).catch(() => {});
   }, []);
 
   const stepVolume = useCallback((delta: number) => {
@@ -862,6 +1070,14 @@ export default function App() {
     });
   }, []);
 
+  const removeFromRecentFiles = useCallback((path: string) => {
+    setRecentFiles((prev) => {
+      const next = prev.filter((p) => p !== path);
+      storeRef.current?.set("recentFiles", next).then(() => storeRef.current?.save()).catch(() => {});
+      return next;
+    });
+  }, []);
+
   const handleLoadSubtitle = useCallback(async () => {
     try {
       const path = await open({
@@ -921,6 +1137,9 @@ export default function App() {
 
   const handlePlaylistPlayIndex = useCallback((idx: number) => {
     log.info("load", `playlist_play_index ${idx}`);
+    // Return focus to the document body so subsequent Space/k keypresses reach
+    // the window handler instead of re-triggering the clicked playlist button.
+    (document.activeElement as HTMLElement)?.blur();
     // Same loading splash as loadPath — playlist transitions also have the
     // transparent gap until mpv:file-loaded for the next entry fires.
     if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
@@ -971,6 +1190,11 @@ export default function App() {
           return;
         }
       }
+
+      // Block all playback keys while a spinner is shown (seeking frame not
+      // yet decoded, or source still loading). Letting space/arrows through
+      // during this window causes mpv to toggle pause or seek on stale state.
+      if (isSeekingRef.current || isLoadingRef.current) return;
 
       log.debug("keys", `key=${e.key}`);
 
@@ -1125,21 +1349,35 @@ export default function App() {
     log.info("load", `loadPath ${path}`);
     if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
     setIsLoading(true);
+    // Archives must route through open_archive — handing a .zip/.7z/.rar
+    // straight to mpv crashes the demuxer.
+    const lower = path.toLowerCase();
+    const isArchive =
+      lower.endsWith(".zip") ||
+      lower.endsWith(".7z") ||
+      lower.endsWith(".rar");
     // Safety timer — if mpv:file-loaded never fires (corrupt/missing
-    // codec), drop the splash anyway so the UI isn't stuck.
+    // codec), drop the splash anyway so the UI isn't stuck. Archives need
+    // a longer window because central-directory read + first-entry extract
+    // can take a few seconds on a big multi-GB zip.
     loadingTimerRef.current = setTimeout(() => {
-      log.warn("load", "splash timeout (10s) — clearing");
+      log.warn("load", "splash timeout — clearing");
       setIsLoading(false);
       loadingTimerRef.current = null;
-    }, 10_000);
+    }, isArchive ? 30_000 : 10_000);
     try {
-      await invoke("load_file", { path });
+      if (isArchive) {
+        await invoke("open_archive", { url: path, append: false });
+      } else {
+        await invoke("load_file", { path });
+      }
+      // React 18 batches these. isPlaying is driven by mpv:pause events
+      // from the backend so we don't set it optimistically here.
       setHasFile(true);
-      setIsPlaying(true);
       setError(null);
       addToRecentFiles(path);
     } catch (e) {
-      log.err("load", `load_file failed: ${String(e)}`);
+      log.err("load", `${isArchive ? "open_archive" : "load_file"} failed: ${String(e)}`);
       setError(String(e));
       clearLoadingState();
     }
@@ -1176,17 +1414,102 @@ export default function App() {
         multiple: false,
         filters: [
           {
-            name: "Video",
-            extensions: ["mp4", "mkv", "avi", "mov", "webm", "m4v", "ts", "flv", "wmv"],
+            name: "Video / Archive",
+            extensions: [
+              // Video / audio containers
+              "mp4",
+              "mkv",
+              "avi",
+              "mov",
+              "webm",
+              "m4v",
+              "ts",
+              "flv",
+              "wmv",
+              "mpg",
+              "mpeg",
+              "ogv",
+              "3gp",
+              "m2ts",
+              "mts",
+              // Archives — routed through open_archive (lazy extract).
+              "zip",
+              "7z",
+              "rar",
+            ],
           },
         ],
       });
       if (!selected || typeof selected !== "string") return;
-      await loadPath(selected);
+      const lower = selected.toLowerCase();
+      const isArchive =
+        lower.endsWith(".zip") ||
+        lower.endsWith(".7z") ||
+        lower.endsWith(".rar");
+      if (isArchive) {
+        // Same code path as OpenSourceDialog's archive submit, minus the
+        // dialog UI. open_archive does extract + playlist_add_many.
+        try {
+          await invoke("open_archive", { url: selected, append: false });
+          setHasFile(true);
+          setError(null);
+          addToRecentFiles(selected);
+        } catch (e) {
+          setError(String(e));
+        }
+      } else {
+        await loadPath(selected);
+      }
     } catch (e) {
       setError(String(e));
     }
   };
+
+  // Submit handler for the OpenSourceDialog. `append=true` queues into the
+  // playlist; `false` replaces the current file. Mirrors loadPath's loading-
+  // splash + recents bookkeeping so the user gets the same UX whether they
+  // opened a local file or a URL. Errors propagate so the dialog can
+  // display them inline instead of swallowing.
+  const handleOpenSource = useCallback(
+    async (url: string, append: boolean) => {
+      log.info("load", `open_source append=${append} url=${url}`);
+      const wasEmpty = !hasFileRef.current;
+      const effectiveAppend = append && !wasEmpty;
+
+      // Mid-playback switch: pause immediately so the backend state is
+      // correct during the gap before the new file's demuxer-ready signal.
+      if (!effectiveAppend && hasFileRef.current && isPlayingRef.current) {
+        invoke("pause").catch(() => {});
+      }
+
+      if (!append || wasEmpty) {
+        if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
+        setIsLoading(true);
+        loadingTimerRef.current = setTimeout(() => {
+          setIsLoading(false);
+          loadingTimerRef.current = null;
+        }, 30_000);
+      }
+      try {
+        const lower = url.toLowerCase();
+        const isArchive =
+          lower.endsWith(".zip") ||
+          lower.endsWith(".7z") ||
+          lower.endsWith(".rar");
+        const cmd = isArchive ? "open_archive" : "open_source";
+        await invoke(cmd, { url, append: effectiveAppend });
+        if (!append || wasEmpty) {
+          setHasFile(true);
+          setError(null);
+          addToRecentFiles(url);
+        }
+      } catch (e) {
+        clearLoadingState();
+        throw e;
+      }
+    },
+    [clearLoadingState]
+  );
 
   const handleVolumeChange = (v: number) => {
     setVolume(v);
@@ -1236,12 +1559,18 @@ export default function App() {
     }
     dragSeekPendingRef.current = null;
     log.info("seek", `commit pct=${p.toFixed(2)}%`);
+    setIsSeeking(true);
+    // Safety fallback — cleared early by mpv:playback-restart (primary) or
+    // mpv:time-pos landing at the seek target (paused-seek backup).
+    if (seekIndicatorTimerRef.current) clearTimeout(seekIndicatorTimerRef.current);
+    seekIndicatorTimerRef.current = setTimeout(() => setIsSeeking(false), 8000);
     seekAbsolutePct(p);
   };
 
   useEffect(() => {
     return () => {
       if (dragSeekTimerRef.current !== null) clearTimeout(dragSeekTimerRef.current);
+      if (seekIndicatorTimerRef.current !== null) clearTimeout(seekIndicatorTimerRef.current);
     };
   }, []);
 
@@ -1284,9 +1613,10 @@ export default function App() {
       audioFxTimerRef.current = setTimeout(() => {
         const latest = audioFxLatestRef.current;
         if (!latest) return;
+        if (!latest.fx?.eq) return;
         log.info(
           "audio-fx",
-          `push mono=${latest.mono} dyn=${latest.dyn.enabled} normalize=${latest.fx.normalize} night=${latest.fx.nightMode} eq=${latest.fx.eq.enabled} eqBands=[${latest.fx.eq.bands.join(",")}] delayMs=${latest.fx.audioDelayMs}`
+          `push mono=${latest.mono} dyn=${latest.dyn.enabled} normalize=${latest.fx.normalize} night=${latest.fx.nightMode} eq=${latest.fx?.eq?.enabled} eqBands=[${latest.fx?.eq?.bands?.join(",")}] delayMs=${latest.fx.audioDelayMs}`
         );
         invoke("set_audio_fx", {
           mono: latest.mono,
@@ -1469,37 +1799,91 @@ export default function App() {
                 <p className="text-white text-sm font-medium tracking-wide">Trace Player</p>
                 <p className="text-neutral-500 text-xs mt-1">Open a video file to begin</p>
               </div>
-              <button
-                onClick={handleOpenFile}
-                className="px-5 py-2 bg-white text-black text-sm font-medium rounded-lg
-                           hover:bg-neutral-200 active:scale-95 transition-all duration-100"
-              >
-                Open File
-              </button>
+              <div className="flex gap-2 items-center">
+                <button
+                  onClick={handleOpenFile}
+                  className="px-5 py-2 bg-white text-black text-sm font-medium rounded-lg
+                             hover:bg-neutral-200 active:scale-95 transition-all duration-100"
+                >
+                  Open File
+                </button>
+                <button
+                  onClick={() => setOpenSourceOpen(true)}
+                  className="px-4 py-2 bg-white/10 text-white text-sm font-medium rounded-lg
+                             border border-white/15 hover:bg-white/15 active:scale-95
+                             transition-all duration-100"
+                >
+                  Open URL or Torrent
+                </button>
+              </div>
 
               {recentFiles.length > 0 && (
                 <div className="mt-2 w-64 max-h-48 overflow-y-auto">
                   <p className="text-neutral-500 text-[10px] uppercase tracking-wider mb-1.5">
                     Recent
                   </p>
-                  {recentFiles.slice(0, 10).map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => loadPath(p)}
-                      className="w-full text-left px-2 py-1.5 rounded-md text-xs text-neutral-400
-                                 hover:text-white hover:bg-white/8 transition-colors duration-100
-                                 truncate cursor-pointer"
-                      title={p}
-                    >
-                      {p.split(/[\\/]/).pop()}
-                    </button>
-                  ))}
+                  {recentFiles.slice(0, 10).map((p) => {
+                    const isUrl =
+                      p.startsWith("http://") ||
+                      p.startsWith("https://") ||
+                      p.startsWith("magnet:") ||
+                      p.startsWith("rtsp://") ||
+                      p.startsWith("rtmp://");
+                    const display = isUrl ? p : (p.split(/[\\/]/).pop() ?? p);
+                    return (
+                      <div
+                        key={p}
+                        className="group flex items-center gap-1 rounded-md
+                                   hover:bg-white/8 transition-colors duration-100"
+                      >
+                        <button
+                          onClick={() =>
+                            isUrl ? handleOpenSource(p, false) : loadPath(p)
+                          }
+                          className="flex-1 min-w-0 text-left px-2 py-1.5 rounded-md text-xs
+                                     text-neutral-400 hover:text-white truncate cursor-pointer"
+                          title={p}
+                        >
+                          {display}
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeFromRecentFiles(p);
+                          }}
+                          className="w-5 h-5 mr-1 flex items-center justify-center shrink-0
+                                     text-neutral-600 hover:text-red-400
+                                     opacity-0 group-hover:opacity-100
+                                     transition-opacity duration-100 cursor-pointer"
+                          title="Remove from recent"
+                          aria-label="Remove from recent"
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={2}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="w-3 h-3"
+                          >
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Source-loading overlay: torrent first-byte fetches, archive
+          first-entry extracts, on-demand cache misses on playlist skip. */}
+      <LoadingSourceOverlay />
 
       {/* Loading splash — covers the transparent gap between loadPath() and
           mpv:file-loaded so the user doesn't stare through the window for
@@ -1513,7 +1897,7 @@ export default function App() {
             exit={{ opacity: 0, transition: { duration: 0.2 } }}
             transition={{ duration: 0.15 }}
             className="absolute inset-0 z-40 flex items-center justify-center
-                       bg-neutral-950/85 backdrop-blur-md pointer-events-none"
+                       bg-neutral-950/85 backdrop-blur-md pointer-events-auto"
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
@@ -1526,6 +1910,36 @@ export default function App() {
                 Loading…
               </p>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Buffering banner — shown while mpv is paused-for-cache, OR while
+          the user is seeking on a non-local source (stream/torrent). The
+          banner owns its own paused-for-cache listener; forcedVisible drives
+          it during seeks where paused-for-cache may never fire. */}
+      <BufferingBanner
+        hasFile={hasFile}
+        forcedVisible={isSeeking && !isLocalFile}
+      />
+
+      {/* Seek indicator — small top pill for local-file seeks only.
+          Non-local seeks use the full centered BufferingBanner above. */}
+      <AnimatePresence>
+        {hasFile && isSeeking && isLocalFile && (
+          <motion.div
+            key="seeking"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.15 }}
+            className="absolute top-4 left-1/2 -translate-x-1/2 z-40
+                       flex items-center gap-2 px-3.5 py-1.5 rounded-full
+                       bg-black/75 backdrop-blur-md border border-white/10
+                       text-white/85 select-none pointer-events-none"
+          >
+            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+            <span className="text-[12px] font-medium">Seeking…</span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1640,6 +2054,10 @@ export default function App() {
             onFullscreenToggle={toggleFullscreen}
             onHoverChange={handleBarHoverChange}
             onOpenFile={handleOpenFile}
+            onSourceLocal={handleOpenFile}
+            onSourceNetwork={() => setOpenSourceOpen(true)}
+            onSourceRecent={() => setRecentPanelOpen(true)}
+            showThumbnails={isLocalFile}
           />
         )}
       </AnimatePresence>
@@ -1661,6 +2079,7 @@ export default function App() {
         items={playlist}
         loopPlaylist={loopMode === "playlist"}
         onAdd={handleAddPlaylistFiles}
+        onAddUrl={() => setOpenSourceOpen(true)}
         onClear={handlePlaylistClear}
         onShuffle={handlePlaylistShuffle}
         onLoopPlaylistToggle={handleLoopPlaylistToggleFromPanel}
@@ -1668,6 +2087,42 @@ export default function App() {
         onRemove={handlePlaylistRemove}
         onMove={handlePlaylistMove}
       />
+
+      <OpenSourceDialog
+        open={openSourceOpen}
+        onSubmit={handleOpenSource}
+        onClose={() => setOpenSourceOpen(false)}
+      />
+
+      <RecentSourcesPanel
+        open={recentPanelOpen}
+        recents={recentFiles}
+        onPick={(p) => {
+          const lower = p.toLowerCase();
+          if (
+            lower.startsWith("http://") ||
+            lower.startsWith("https://") ||
+            lower.startsWith("rtsp://") ||
+            lower.startsWith("rtmp://") ||
+            lower.startsWith("rtmps://") ||
+            lower.startsWith("mms://") ||
+            lower.startsWith("magnet:")
+          ) {
+            void handleOpenSource(p, false);
+          } else {
+            void loadPath(p);
+          }
+        }}
+        onClear={async () => {
+          setRecentFiles([]);
+          if (storeRef.current) {
+            await storeRef.current.set("recentFiles", []);
+            await storeRef.current.save();
+          }
+        }}
+        onClose={() => setRecentPanelOpen(false)}
+      />
+
 
       {/* Jump to time dialog */}
       <JumpToTimeDialog

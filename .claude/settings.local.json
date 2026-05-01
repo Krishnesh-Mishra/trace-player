@@ -17,7 +17,17 @@
       "PowerShell(Get-Process media-player -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, @{Name='WorkingSetMB';Expression={[math]::Round\\($_.WorkingSet64 / 1MB, 1\\)}})",
       "Bash(npm run *)",
       "Bash(where magick *)",
-      "Bash(npx tauri *)"
+      "Bash(npx tauri *)",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:mpv.io)",
+      "Bash(/c/Users/krish/Desktop/Bin/Coding/Projects/Un-Finished/media-player/src-tauri/assets/rqbit.exe --version)",
+      "Bash(/c/Users/krish/Desktop/Bin/Coding/Projects/Un-Finished/media-player/src-tauri/assets/rqbit.exe server *)",
+      "Bash(/c/Users/krish/Desktop/Bin/Coding/Projects/Un-Finished/media-player/src-tauri/assets/rqbit.exe *)",
+      "Bash(\"C:/Users/krish/Desktop/Bin/Coding/Projects/Un-Finished/media-player/src-tauri/assets/rqbit.exe\" server *)",
+      "Bash(\"C:/Users/krish/Desktop/Bin/Coding/Projects/Un-Finished/media-player/src-tauri/assets/rqbit.exe\" --help)",
+      "Bash(grep -E \"\\(error\\\\[|src\\\\\\\\\\\\\\\\.+:[0-9]+:[0-9]+: \\(error|warning\\)\\)\")",
+      "Bash(npx -p typescript tsc --noEmit -p tsconfig.json)",
+      "Bash(cargo update *)"
     ]
   }
 }

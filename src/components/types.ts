@@ -60,13 +60,39 @@ export type SettingsPage =
   | "dynamic"
   | "subtitles"
   | "video_main"
+  | "video_appearance"
   | "video_image"
   | "video_adjust"
+  | "video_quality"
   | "video_hdr"
   | "video_upscaling"
   | "video_interp"
+  | "video_source"
   | "performance"
   | "appearance";
+
+
+/** Archive extensions that map to the lazy-extract playlist flow. */
+export const ARCHIVE_EXTS = ["zip", "7z", "rar"] as const;
+
+/** Local video extensions accepted by the file picker. */
+export const LOCAL_VIDEO_EXTS = [
+  "mp4",
+  "mkv",
+  "avi",
+  "mov",
+  "webm",
+  "m4v",
+  "ts",
+  "flv",
+  "wmv",
+  "mpg",
+  "mpeg",
+  "ogv",
+  "3gp",
+  "m2ts",
+  "mts",
+] as const;
 
 export type AudioDevice = {
   name: string;

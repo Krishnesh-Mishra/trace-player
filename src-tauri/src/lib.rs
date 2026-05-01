@@ -1,4 +1,5 @@
 mod agc;
+mod archive;
 mod commands;
 mod events;
 mod log;
@@ -6,6 +7,7 @@ mod perf;
 mod player;
 mod power;
 mod state;
+mod streaming;
 mod thumbnailer;
 
 #[cfg(all(target_os = "windows", target_env = "msvc"))]
@@ -23,18 +25,138 @@ use player::Player;
 use state::AppState;
 use tauri::{Emitter, Manager};
 
-/// Pull a video file path out of CLI args. Skips the program name and any
-/// flags (anything starting with `-`). Returns the first path that exists.
+// ── WebView HWND lookup (Windows) ───────────────────────────────────────────
+//
+// We still cache the WebView2 child HWND at startup (some integrations want
+// it), but the dormancy hide/show shims are now no-ops — see hide_webview /
+// show_webview below for the rationale.
+#[cfg(target_os = "windows")]
+mod ui_visibility {
+    use std::ffi::c_void;
+    use std::ptr;
+
+    type HWND = *mut c_void;
+    type BOOL = i32;
+    type LPARAM = isize;
+
+    extern "system" {
+        fn EnumChildWindows(
+            hwnd_parent: HWND,
+            lp_enum_func: extern "system" fn(HWND, LPARAM) -> BOOL,
+            l_param: LPARAM,
+        ) -> BOOL;
+        fn GetClassNameW(hwnd: HWND, lp_class_name: *mut u16, n_max_count: i32) -> i32;
+    }
+
+    extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let mut buf = [0u16; 128];
+        let len = unsafe { GetClassNameW(hwnd, buf.as_mut_ptr(), 128) };
+        if len > 0 {
+            let cls = String::from_utf16_lossy(&buf[..len as usize]);
+            // The WebView2 host registers its window with a Chromium widget
+            // class. mpv's render child uses different class names, so this
+            // selector reliably finds the WebView and not mpv.
+            if cls.starts_with("Chrome_WidgetWin_") {
+                unsafe {
+                    let out = lparam as *mut HWND;
+                    *out = hwnd;
+                }
+                return 0; // stop enumeration
+            }
+        }
+        1 // continue
+    }
+
+    /// Walks the parent HWND's children for a Chromium-Widget class window
+    /// and returns its HWND as isize.
+    pub fn find_webview(parent: isize) -> Option<isize> {
+        let parent_hwnd = parent as HWND;
+        let mut result: HWND = ptr::null_mut();
+        unsafe {
+            EnumChildWindows(parent_hwnd, enum_proc, &mut result as *mut HWND as LPARAM);
+        }
+        if result.is_null() {
+            None
+        } else {
+            Some(result as isize)
+        }
+    }
+}
+
+/// Cross-platform shim. Currently a no-op everywhere: SW_HIDE on the
+/// WebView2 child got stuck on some systems — once hidden, ShowWindow
+/// (SW_SHOWNOACTIVATE) didn't reliably bring it back, so the user was
+/// left with mpv playing while the React UI was unreachable except via
+/// keyboard shortcuts. JS-side CSS visibility:hidden still hides the
+/// controls and Page-Visibility-throttles JS rAF — the OS-level surface
+/// drop was a marginal-extra power saving and not worth the bug.
+pub(crate) fn hide_webview(_hwnd: isize) {
+    // intentionally empty
+}
+
+pub(crate) fn show_webview(_hwnd: isize) {
+    // intentionally empty
+}
+
+/// Resolve a binary that the installer placed alongside the .exe. Tries
+/// several candidate paths so the same code works across:
+///   - NSIS install:           `<exe_dir>\bin\<name>`
+///   - Tauri resource bundle:  `<exe_dir>\resources\bin\<name>`
+///                             `<exe_dir>\resources\assets\<name>`
+///   - Loose next-to-exe:      `<exe_dir>\<name>`
+///   - `cargo tauri dev` from the source tree: walks up looking for
+///     `src-tauri\assets\<name>`
+pub(crate) fn find_bundled_binary(name: &str) -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+
+    let mut candidates: Vec<std::path::PathBuf> = vec![
+        dir.join("bin").join(name),
+        dir.join("resources").join("bin").join(name),
+        dir.join("resources").join("assets").join(name),
+        dir.join(name),
+    ];
+    let mut up = dir.to_path_buf();
+    for _ in 0..6 {
+        candidates.push(up.join("src-tauri").join("assets").join(name));
+        candidates.push(up.join("assets").join(name));
+        match up.parent() {
+            Some(p) => up = p.to_path_buf(),
+            None => break,
+        }
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// Pull a video source out of CLI args. Skips the program name and any
+/// flags (anything starting with `-`). Returns the first arg that is either
+/// a real file, a `.torrent` file path, or a recognized network URL scheme
+/// (http/https/rtsp/rtmp/mms/magnet/file). Magnet URIs and `.torrent` files
+/// are handled later by the streaming module.
 fn first_file_arg(argv: &[String]) -> Option<String> {
     for raw in argv.iter().skip(1) {
         if raw.starts_with('-') {
             continue;
         }
-        if std::path::Path::new(raw).is_file() {
+        if is_supported_source(raw) {
             return Some(raw.clone());
         }
     }
     None
+}
+
+fn is_supported_source(s: &str) -> bool {
+    if std::path::Path::new(s).is_file() {
+        return true;
+    }
+    let lower = s.to_ascii_lowercase();
+    if lower.ends_with(".torrent") {
+        return true;
+    }
+    matches!(
+        lower.split_once(':').map(|(scheme, _)| scheme),
+        Some("http" | "https" | "rtsp" | "rtmp" | "mms" | "magnet" | "file")
+    )
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -92,6 +214,9 @@ pub fn run() {
     let agc_for_events = app_state.agc.clone();
     let perf_for_power = app_state.perf.clone();
     let perf_for_setup = app_state.perf.clone();
+    let ui_for_events = app_state.ui.clone();
+    #[cfg(target_os = "windows")]
+    let ui_for_setup = app_state.ui.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -128,10 +253,47 @@ pub fn run() {
 
             if let Some(ref player) = player_for_setup {
                 attach_mpv_to_window(player, &window);
+
+                // Cache the WebView HWND once; the dormant/wake commands
+                // reuse it without re-enumerating. Windows-only — on Linux
+                // the JS side handles dormancy via CSS alone.
+                #[cfg(target_os = "windows")]
+                {
+                    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                    if let Ok(handle) = window.window_handle() {
+                        if let RawWindowHandle::Win32(h) = handle.as_raw() {
+                            let parent_hwnd = h.hwnd.get();
+                            if let Some(wv) = ui_visibility::find_webview(parent_hwnd) {
+                                np_info!("ui", "found WebView2 HWND {:#x}", wv);
+                                ui_for_setup.set_webview_hwnd(wv);
+                            } else {
+                                np_warn!("ui", "WebView2 HWND not found — dormancy will be JS-only");
+                            }
+                        }
+                    }
+                }
+
+                // Forward mouse + wheel events from mpv into the Rust event
+                // loop as `script-message ui-wake`. The events handler emits
+                // `ui:wake` to JS only when currently dormant, so the 60 Hz
+                // MOUSE_MOVE storm doesn't cross IPC during normal use.
+                for key in &[
+                    "MOUSE_MOVE",
+                    "MBTN_LEFT",
+                    "MBTN_LEFT_DBL",
+                    "MBTN_RIGHT",
+                    "MBTN_MID",
+                    "WHEEL_UP",
+                    "WHEEL_DOWN",
+                ] {
+                    let _ = player.command(&["keybind", key, "script-message ui-wake"]);
+                }
+
                 events::start_event_loop(
                     app.handle().clone(),
                     player.clone(),
                     agc_for_events.clone(),
+                    ui_for_events.clone(),
                 );
                 agc::start_agc_loop(player.clone(), agc_for_loop.clone());
 
@@ -235,6 +397,7 @@ pub fn run() {
             commands::playlist_prev,
             commands::playlist_move,
             commands::get_playlist,
+            commands::get_player_state,
             commands::load_subtitle,
             commands::frame_step,
             commands::set_deinterlace,
@@ -244,9 +407,26 @@ pub fn run() {
             commands::enter_pip,
             commands::exit_pip,
             commands::force_redraw,
+            commands::ui_dormant,
+            commands::ui_wake,
+            commands::open_source,
+            commands::set_stream_cache,
+            commands::open_archive,
+            commands::set_torrent_cache_limit,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app_handle, event| {
+            // RunEvent::Exit fires once after every window has been
+            // requested-close and right before tauri tears down managed
+            // state. We use it to ask rqbit to forget every torrent we added
+            // this session — the StreamingSession's Drop kills the sidecar
+            // unconditionally, but forget() lets rqbit flush cleanly first.
+            if matches!(event, tauri::RunEvent::Exit) {
+                let st: tauri::State<'_, AppState> = app_handle.state();
+                commands::forget_all_torrents(st.inner());
+            }
+        });
 }
 
 /// Resolve the directory that holds the bundled FSRCNNX / KrigBilateral
@@ -412,9 +592,10 @@ fn install_windows_integrations(window: &tauri::WebviewWindow, player: Arc<Playe
         }
     });
 
-    // Mirror playback state into SMTC + taskbar by polling pause every 250 ms.
-    // Cheaper than re-piping through events.rs and avoids a second observer
-    // dependency. When Trace Player is paused for hours, the cost is negligible.
+    // Mirror playback state into SMTC + taskbar. Was 250 ms (4 Hz) — that
+    // pinned the CPU in C2/C3 forever, blocking deep idle. 1000 ms (1 Hz)
+    // matches what Win11's volume flyout actually consumes; the scrubber
+    // update is slightly chunkier but battery cost drops 4×.
     if smtc_ctrl.is_some() || tb_ctrl.is_some() {
         let player_for_mirror = player.clone();
         let smtc_for_mirror = smtc_ctrl.clone();
@@ -424,7 +605,7 @@ fn install_windows_integrations(window: &tauri::WebviewWindow, player: Arc<Playe
             let mut last_title: Option<String> = None;
             let mut tick: u32 = 0;
             loop {
-                std::thread::sleep(std::time::Duration::from_millis(250));
+                std::thread::sleep(std::time::Duration::from_millis(1000));
                 let paused = player_for_mirror
                     .get_property_flag("pause")
                     .unwrap_or(true);

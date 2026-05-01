@@ -16,10 +16,22 @@ mod ffi {
     // Event IDs (subset we care about)
     pub const MPV_EVENT_NONE: c_int = 0;
     pub const MPV_EVENT_SHUTDOWN: c_int = 1;
+    pub const MPV_EVENT_LOG_MESSAGE: c_int = 2;
     pub const MPV_EVENT_END_FILE: c_int = 7;
     pub const MPV_EVENT_FILE_LOADED: c_int = 8;
+    pub const MPV_EVENT_CLIENT_MESSAGE: c_int = 16;
     pub const MPV_EVENT_PLAYBACK_RESTART: c_int = 21;
     pub const MPV_EVENT_PROPERTY_CHANGE: c_int = 22;
+
+    /// Payload of MPV_EVENT_LOG_MESSAGE. Strings are NUL-terminated UTF-8
+    /// owned by mpv; copy out before the next wait_event call.
+    #[repr(C)]
+    pub struct mpv_event_log_message {
+        pub prefix: *const c_char,
+        pub level: *const c_char,
+        pub text: *const c_char,
+        pub log_level: c_int,
+    }
 
     #[repr(C)]
     pub struct mpv_event {
@@ -36,6 +48,38 @@ mod ffi {
         pub format: c_int,
         pub data: *mut c_void,
     }
+
+    /// Payload of MPV_EVENT_CLIENT_MESSAGE. Args are NUL-terminated UTF-8
+    /// strings produced by mpv's `script-message <name> [args...]` command.
+    /// The pointers are owned by mpv and invalidated on the next wait_event.
+    #[repr(C)]
+    pub struct mpv_event_client_message {
+        pub num_args: c_int,
+        pub args: *mut *const c_char,
+    }
+
+    /// Payload of MPV_EVENT_END_FILE. `reason` is one of MPV_END_FILE_REASON_*;
+    /// `error` is meaningful only when reason==ERROR (mpv error code, negative).
+    /// Layout matches client.h `mpv_event_end_file` for libmpv 2 ABI.
+    #[repr(C)]
+    #[allow(dead_code)]
+    pub struct mpv_event_end_file {
+        pub reason: c_int,
+        pub error: c_int,
+        pub playlist_entry_id: i64,
+        pub playlist_insert_id: i64,
+        pub playlist_insert_num_entries: c_int,
+    }
+
+    #[allow(dead_code)]
+    pub const MPV_END_FILE_REASON_EOF: c_int = 0;
+    #[allow(dead_code)]
+    pub const MPV_END_FILE_REASON_STOP: c_int = 2;
+    #[allow(dead_code)]
+    pub const MPV_END_FILE_REASON_QUIT: c_int = 3;
+    pub const MPV_END_FILE_REASON_ERROR: c_int = 4;
+    #[allow(dead_code)]
+    pub const MPV_END_FILE_REASON_REDIRECT: c_int = 5;
 
     extern "C" {
         pub fn mpv_create() -> *mut mpv_handle;
@@ -80,6 +124,10 @@ mod ffi {
             name: *const c_char,
             format: c_int,
         ) -> c_int;
+        pub fn mpv_request_log_messages(
+            ctx: *mut mpv_handle,
+            min_level: *const c_char,
+        ) -> c_int;
         pub fn mpv_wait_event(ctx: *mut mpv_handle, timeout: c_double) -> *mut mpv_event;
         pub fn mpv_command(ctx: *mut mpv_handle, args: *const *const c_char) -> c_int;
         pub fn mpv_error_string(error: c_int) -> *const c_char;
@@ -113,11 +161,27 @@ impl Drop for Player {
 pub enum MpvEvent {
     PropertyChange { tag: u64 },
     FileLoaded,
-    EndFile,
+    /// `reason` is one of MPV_END_FILE_REASON_*; `error` is the mpv error
+    /// code (negative) when reason==ERROR, otherwise 0.
+    EndFile { reason: i32, error: i32 },
     PlaybackRestart,
+    /// MPV_EVENT_CLIENT_MESSAGE — `args[0]` is the message name, the rest are
+    /// arguments passed by `script-message <name> [args...]` mpv commands.
+    /// Used for input forwarding (e.g. MOUSE_MOVE → "ui-wake").
+    ClientMessage { args: Vec<String> },
+    /// MPV_EVENT_LOG_MESSAGE — internal mpv/libavformat/ffmpeg log line.
+    /// Forwarded to our log facility so HTTP/TLS/codec errors are visible
+    /// in the dev console instead of just hiding behind `END_FILE error=-13`.
+    LogMessage {
+        prefix: String,
+        level: String,
+        text: String,
+    },
     Shutdown,
     Other,
 }
+
+pub use ffi::MPV_END_FILE_REASON_ERROR;
 
 impl Player {
     pub fn new() -> Result<Self, String> {
@@ -136,7 +200,25 @@ impl Player {
             } else {
                 crate::np_info!("mpv-init", "vo=gpu-next");
             }
-            set_opt(handle, "hwdec", "auto")?;
+            // Hardware decode — the foundation of low-power playback.
+            // `auto-safe` restricts to well-tested HW backends (d3d11va on Win,
+            // vaapi on Linux, videotoolbox on Mac) and avoids `*-copy` paths so
+            // decoded frames stay in GPU memory the entire pipeline. Falls back
+            // to `auto` on older libmpv builds that don't recognise the value.
+            if set_opt(handle, "hwdec", "auto-safe").is_err() {
+                crate::np_warn!("mpv-init", "hwdec=auto-safe unavailable — using auto");
+                set_opt(handle, "hwdec", "auto")?;
+            } else {
+                crate::np_info!("mpv-init", "hwdec=auto-safe");
+            }
+            // Allow the HW decoder to claim every codec it supports — without
+            // this mpv only HW-decodes a conservative subset (h264, hevc, vp9).
+            // Adding av1, vvc etc. lets Panther Lake / Meteor Lake / DG2's
+            // media engines do AV1 in silicon.
+            set_opt_optional(handle, "hwdec-codecs", "all");
+            // Direct rendering — the decoder writes directly into the VO's
+            // frame buffer, eliminating one CPU-side memcpy per frame.
+            set_opt_optional(handle, "vd-lavc-dr", "yes");
             // Windows: force d3d11 so d3d11-exclusive-fs (set below) actually
             // engages — with `auto`, mpv may pick winvk/dxinterop and silently
             // ignore the exclusive-fs flag, which is the only way to bypass
@@ -172,6 +254,60 @@ impl Player {
             // vo=gpu builds, which is why we use the optional setter.
             set_opt_optional(handle, "target-colorspace-hint", "yes");
             set_opt_optional(handle, "hdr-compute-peak", "yes");
+
+            // Black backdrop instead of see-through to the desktop. The
+            // Tauri window stays transparent (so glassmorphism on the UI
+            // panels keeps working), but mpv paints solid black wherever
+            // it doesn't have video pixels — letterbox bars, the area
+            // before any file is loaded, etc.
+            //
+            // Older mpv: `--background=color` selects color mode and
+            // `--background-color` picks the value.
+            // Newer mpv (0.36+): `--background=#RRGGBB` does both at once.
+            // Setting both is harmless — the second is ignored on builds
+            // that already absorbed it via the first.
+            set_opt_optional(handle, "background", "color");
+            set_opt_optional(handle, "background-color", "#000000");
+
+            // Streaming-friendly cache. Defaults are 150 MiB demuxer +
+            // 75 MiB back-buffer = ~225 MB resident per file regardless of
+            // size. Trim to 10 + 5 MiB so a 10 GB film uses ~15 MB of RAM —
+            // the OS page cache covers locality. cache-on-disk=no avoids
+            // background disk writes during steady-state playback.
+            set_opt_optional(handle, "cache", "yes");
+            set_opt_optional(handle, "cache-secs", "5");
+            set_opt_optional(handle, "cache-on-disk", "no");
+            set_opt_optional(handle, "demuxer-max-bytes", "10MiB");
+            set_opt_optional(handle, "demuxer-max-back-bytes", "5MiB");
+            // Bound the decoded-frame queue (mpv 0.36+). Default queue can
+            // hold hundreds of MiB on 4K HDR content.
+            set_opt_optional(handle, "vd-queue-max-bytes", "64MiB");
+
+            // Network playback via libavformat (http/https/rtsp/rtmp/mms).
+            // ytdl_hook disabled — we don't bundle yt-dlp.
+            set_opt_optional(handle, "ytdl", "no");
+            // Larger network timeout; default 60s is too long when a host is
+            // unreachable but 5s is too tight for a slow handshake.
+            set_opt_optional(handle, "network-timeout", "20");
+            // TLS verification disabled by default — the shinchiro / sourceforge
+            // libmpv-2.dll builds for Windows ship gnutls without a usable CA
+            // store, so HTTPS handshakes fail with MPV_ERROR_LOADING_FAILED
+            // (-13) on perfectly valid URLs. The proper fix is to bundle
+            // curl's cacert.pem and pass --tls-ca-file=<path>; until then
+            // disabling verify is the only way HTTPS streams play at all.
+            // Risk: man-in-the-middle on streams. Acceptable for a media
+            // player; revisit when we ship a CA bundle.
+            set_opt_optional(handle, "tls-verify", "no");
+            // libavformat-side knob — same effect but applied to the
+            // demuxer's own TLS context (some builds honor only one of these).
+            set_opt_optional(handle, "demuxer-lavf-o-add", "tls_verify=0");
+            set_opt_optional(handle, "force-seekable", "yes");
+            // Mozilla-compatible UA so CDNs/anti-bot WAFs don't reject us.
+            set_opt_optional(
+                handle,
+                "user-agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+            );
 
             // Windows: bypass the desktop compositor in fullscreen for direct
             // display swap (lower latency, smoother high-refresh delivery).
@@ -432,6 +568,18 @@ impl Player {
         }
     }
 
+    /// Subscribe to mpv's internal log stream at `min_level` and above
+    /// (e.g. "info", "warn", "error"). Each line arrives as
+    /// `MpvEvent::LogMessage` in `wait_event`. Use sparingly — "debug" is
+    /// extremely chatty.
+    pub fn request_log_messages(&self, min_level: &str) -> Result<(), String> {
+        unsafe {
+            let lvl = cstr(min_level);
+            let err = ffi::mpv_request_log_messages(self.handle, lvl.as_ptr());
+            mpv_result(err, "request_log_messages")
+        }
+    }
+
     /// Block waiting for the next mpv event. Copies relevant fields out of the
     /// raw event before returning — the underlying mpv_event* is invalidated by
     /// the next wait_event call.
@@ -446,8 +594,56 @@ impl Player {
             match event_id {
                 ffi::MPV_EVENT_PROPERTY_CHANGE => MpvEvent::PropertyChange { tag: reply },
                 ffi::MPV_EVENT_FILE_LOADED => MpvEvent::FileLoaded,
-                ffi::MPV_EVENT_END_FILE => MpvEvent::EndFile,
+                ffi::MPV_EVENT_END_FILE => {
+                    let data = (*evt).data as *const ffi::mpv_event_end_file;
+                    if data.is_null() {
+                        MpvEvent::EndFile { reason: 0, error: 0 }
+                    } else {
+                        MpvEvent::EndFile {
+                            reason: (*data).reason,
+                            error: (*data).error,
+                        }
+                    }
+                }
                 ffi::MPV_EVENT_PLAYBACK_RESTART => MpvEvent::PlaybackRestart,
+                ffi::MPV_EVENT_LOG_MESSAGE => {
+                    let data = (*evt).data as *const ffi::mpv_event_log_message;
+                    if data.is_null() {
+                        MpvEvent::Other
+                    } else {
+                        let read = |p: *const c_char| {
+                            if p.is_null() {
+                                String::new()
+                            } else {
+                                CStr::from_ptr(p).to_string_lossy().into_owned()
+                            }
+                        };
+                        MpvEvent::LogMessage {
+                            prefix: read((*data).prefix),
+                            level: read((*data).level),
+                            text: read((*data).text).trim_end().to_string(),
+                        }
+                    }
+                }
+                ffi::MPV_EVENT_CLIENT_MESSAGE => {
+                    // Copy each NUL-terminated arg into an owned String so
+                    // the snapshot survives the next wait_event call.
+                    let data = (*evt).data as *const ffi::mpv_event_client_message;
+                    if data.is_null() {
+                        MpvEvent::ClientMessage { args: Vec::new() }
+                    } else {
+                        let n = ((*data).num_args.max(0) as usize).min(64);
+                        let p = (*data).args;
+                        let mut out = Vec::with_capacity(n);
+                        for i in 0..n {
+                            let arg_ptr = *p.add(i);
+                            if !arg_ptr.is_null() {
+                                out.push(CStr::from_ptr(arg_ptr).to_string_lossy().into_owned());
+                            }
+                        }
+                        MpvEvent::ClientMessage { args: out }
+                    }
+                }
                 ffi::MPV_EVENT_SHUTDOWN => MpvEvent::Shutdown,
                 ffi::MPV_EVENT_NONE => MpvEvent::Other,
                 _ => MpvEvent::Other,
@@ -458,6 +654,7 @@ impl Player {
     // ── internal helpers ──────────────────────────────────────────────────────
 
     pub fn command(&self, args: &[&str]) -> Result<(), String> {
+        if args.is_empty() { return Err("command: empty args slice".to_string()); }
         unsafe {
             let cstrings: Vec<CString> = args.iter().map(|s| cstr(s)).collect();
             let mut ptrs: Vec<*const c_char> = cstrings.iter().map(|s| s.as_ptr()).collect();
@@ -629,5 +826,6 @@ unsafe fn err_str(code: c_int) -> String {
 }
 
 fn cstr(s: &str) -> CString {
-    CString::new(s).expect("str must not contain null bytes")
+    CString::new(s.replace('\0', "")).expect("null bytes already stripped")
 }
+

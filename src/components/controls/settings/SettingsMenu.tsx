@@ -33,6 +33,9 @@ import InterpolationPage from "./InterpolationPage";
 import PerformancePage from "./PerformancePage";
 import AppearancePage from "./AppearancePage";
 import AudioDevicePage from "./AudioDevicePage";
+import VideoSourcePage from "./VideoSourcePage";
+import VideoAppearancePage from "./VideoAppearancePage";
+import VideoQualityPage from "./VideoQualityPage";
 
 interface Props {
   open: boolean;
@@ -91,6 +94,9 @@ interface Props {
   onAlwaysOnTopToggle: () => void;
   onJumpToTime: () => void;
   onMediaInfo: () => void;
+  onSourceLocal: () => void;
+  onSourceNetwork: () => void;
+  onSourceRecent: () => void;
 }
 
 export default function SettingsMenu(props: Props) {
@@ -101,16 +107,20 @@ export default function SettingsMenu(props: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open) setTimeout(() => setPage("main"), 250);
+    if (open) return;
+    const t = setTimeout(() => setPage("main"), 250);
+    return () => clearTimeout(t);
   }, [open]);
 
   // Refresh pipeline info whenever the user opens the HDR/Upscaling pages —
   // these are the only places it's displayed, so no need to poll continuously.
   useEffect(() => {
     if (page !== "video_hdr" && page !== "video_upscaling") return;
+    let active = true;
     invoke<PipelineInfo>("get_pipeline_info")
-      .then(setPipeline)
-      .catch(() => setPipeline(null));
+      .then((info) => { if (active) setPipeline(info); })
+      .catch(() => { if (active) setPipeline(null); });
+    return () => { active = false; };
   }, [page]);
 
   useEffect(() => {
@@ -143,7 +153,7 @@ export default function SettingsMenu(props: Props) {
     setDirection(-1);
     setPage(p);
   };
-  const isFullBar =  barSize == "small";
+  const isFullBar = barSize == "small";
   return (
     <AnimatePresence>
       {open && (
@@ -271,12 +281,19 @@ export default function SettingsMenu(props: Props) {
                 onBack={() => goBackTo("main")}
               />
             )}
+            {page === "video_appearance" && (
+              <VideoAppearancePage
+                direction={direction}
+                onNavigate={goTo}
+                onBack={() => goBackTo("video_main")}
+              />
+            )}
             {page === "video_image" && (
               <ImagePage
                 direction={direction}
                 imageParams={props.imageParams}
                 onChange={props.onImageParamsChange}
-                onBack={() => goBackTo("video_main")}
+                onBack={() => goBackTo("video_appearance")}
               />
             )}
             {page === "video_adjust" && (
@@ -284,6 +301,13 @@ export default function SettingsMenu(props: Props) {
                 direction={direction}
                 video={props.videoState}
                 onChange={props.onVideoStateChange}
+                onBack={() => goBackTo("video_appearance")}
+              />
+            )}
+            {page === "video_quality" && (
+              <VideoQualityPage
+                direction={direction}
+                onNavigate={goTo}
                 onBack={() => goBackTo("video_main")}
               />
             )}
@@ -294,7 +318,7 @@ export default function SettingsMenu(props: Props) {
                 info={props.hdrInfo}
                 pipeline={pipeline}
                 onChange={props.onHdrModeChange}
-                onBack={() => goBackTo("video_main")}
+                onBack={() => goBackTo("video_quality")}
               />
             )}
             {page === "video_upscaling" && (
@@ -303,7 +327,7 @@ export default function SettingsMenu(props: Props) {
                 profile={props.upscaling}
                 pipeline={pipeline}
                 onChange={props.onUpscalingChange}
-                onBack={() => goBackTo("video_main")}
+                onBack={() => goBackTo("video_quality")}
               />
             )}
             {page === "video_interp" && (
@@ -315,6 +339,15 @@ export default function SettingsMenu(props: Props) {
                 onModeChange={props.onInterpolationChange}
                 onVsyncChange={props.onVsyncChange}
                 onExclusiveFullscreenChange={props.onExclusiveFullscreenChange}
+                onBack={() => goBackTo("video_quality")}
+              />
+            )}
+            {page === "video_source" && (
+              <VideoSourcePage
+                direction={direction}
+                onLocal={() => { onClose(); props.onSourceLocal(); }}
+                onNetwork={() => { onClose(); props.onSourceNetwork(); }}
+                onRecent={() => { onClose(); props.onSourceRecent(); }}
                 onBack={() => goBackTo("video_main")}
               />
             )}

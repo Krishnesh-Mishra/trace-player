@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost"
     }
   },
   "bundle": {
@@ -37,16 +37,30 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "resources/shaders/*.glsl"
-    ],
+    "resources": {
+      "assets/libmpv-2.dll": "bin/libmpv-2.dll",
+      "assets/yt-dlp.exe": "bin/yt-dlp.exe",
+      "assets/rqbit.exe": "bin/rqbit.exe",
+      "resources/shaders/*.glsl": "shaders/"
+    },
     "fileAssociations": [
       {
         "ext": ["mp4", "mkv", "avi", "mov", "webm", "m4v", "ts", "flv", "wmv"],
         "name": "Video",
         "description": "Video file",
         "role": "Viewer"
+      },
+      {
+        "ext": ["torrent"],
+        "name": "Torrent",
+        "description": "BitTorrent file",
+        "role": "Viewer"
       }
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }

@@ -1,63 +1,50 @@
-// Background thumbnail extraction (hybrid baseline + on-hover dense window).
+// Lazy on-hover thumbnail extraction.
 //
-// Two layers share one headless mpv worker:
+// One headless mpv worker, two reactive paths — neither pre-extracts:
 //
-//   1. Baseline (`start_thumbnail_job`): a sparse sprite atlas covering the
-//      whole file, ~150 tiles regardless of duration. Persisted to disk so
-//      reopening a file is ~50 ms. Progressive emit every 10 tiles via
-//      `mpv:thumbnails-ready`.
+//   1. `request_dense_window` (hover): render N tiles in `[t-radius, t+radius]`
+//      and stream them as `mpv:thumbnail-tile` events. Old jobs are cancelled
+//      when a new one arrives — the frontend keeps an LRU of received tiles.
 //
-//   2. Dense window (`request_dense_window`): on hover, render N tiles in
-//      `[t-radius, t+radius]` and stream them as individual events
-//      (`mpv:thumbnail-tile`). Old jobs are cancelled when a new one comes
-//      in — the frontend keeps an LRU of received tiles.
+//   2. `request_exact_frame` (cursor still ~120 ms): pixel-precise single
+//      frame at the requested timestamp. Same event type as dense.
 //
-// Both layers serialize on a per-tile `WORKER_LOCK` so a hover request can
-// interleave between baseline tiles instead of waiting for the whole atlas.
-// Memory is bounded: baseline = constant tile count, dense = transient
-// per-tile JPEGs (~5 KB) the frontend caches and evicts.
+// `start_thumbnail_job` no longer pre-extracts a baseline sprite. It simply
+// loads the file in the headless mpv so dense / exact requests have a seek
+// target, plus opportunistically emits any legacy cached sprite that still
+// happens to live under %TEMP%/trace-player-thumbs/.
 //
-// Cache: per-file sha1 of (path + mtime + size) keys a JPEG sprite under
-// %TEMP%/trace-player-thumbs/. CACHE_VERSION invalidates on layout changes.
+// Memory: only transient per-tile JPEGs (~5 KB each) cross IPC; the JS-side
+// LRU caps total memory at a few MB. Disk: zero new writes; the legacy
+// cache directory drains via TTL pruning.
 
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
 use base64::{engine::general_purpose, Engine as _};
-use image::{
-    codecs::jpeg::JpegEncoder, imageops::FilterType, GenericImage, ImageReader, RgbImage,
-};
+use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, ImageReader, RgbImage};
 use serde::Serialize;
 use sha1::{Digest, Sha1};
 use tauri::{AppHandle, Emitter};
 
 use crate::player::{MpvEvent, Player};
 
+static THUMB_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 const TILE_W: u32 = 160;
 const TILE_H: u32 = 90;
-const COLS: u32 = 10;
 const DEFER_BEFORE_START: Duration = Duration::from_millis(1500);
 const FILE_LOAD_TIMEOUT: Duration = Duration::from_secs(30);
 const CACHE_DIR_NAME: &str = "trace-player-thumbs";
-// Bump when the baseline tile-count formula changes so old caches are
-// re-derived with the new density.
+// Bump when read_cached_layout's expectations change. Legacy caches with a
+// matching version may still be emitted as a fully-filled sprite on load.
 const CACHE_VERSION: u32 = 3;
 const CACHE_TTL_DAYS: u64 = 30;
-const PROGRESSIVE_EMIT_EVERY: u32 = 10;
-
-// Hybrid pipeline: target ~240 baseline tiles for any file longer than ~30
-// minutes, scaling down to ~20 for short clips so we don't oversample a
-// 30-second file. 240 keeps the worst-case "displayed-frame minus cursor"
-// gap to ~duration/(2·240) — under 30 s for a 4-hour movie, vs. the prior
-// ~1-minute gap at 150 tiles.
-const BASELINE_TARGET: u32 = 240;
-const BASELINE_MIN: u32 = 20;
-const BASELINE_MIN_INTERVAL_S: f64 = 8.0;
 
 #[derive(Serialize, Clone)]
 pub struct ThumbnailReady {
@@ -125,12 +112,14 @@ pub fn start_thumbnail_job(app: AppHandle, thumb: Arc<Player>, path: String) {
     // A new file invalidates any in-flight dense job for the old file.
     cancel_active_dense();
     cancel_active_exact();
-    crate::np_info!("thumb", "start_thumbnail_job path={}", path);
+    crate::np_info!("thumb", "start_thumbnail_job path={} (lazy mode)", path);
 
     thread::spawn(move || {
         // Defer so the main player's first ~second of I/O is unimpeded.
         thread::sleep(DEFER_BEFORE_START);
 
+        // Sweep stale caches from prior versions (we no longer write new
+        // ones — kept here so old %TEMP% entries do drain over time).
         let _ = prune_old_cache();
 
         let fp = match file_fingerprint(&path) {
@@ -143,16 +132,19 @@ pub fn start_thumbnail_job(app: AppHandle, thumb: Arc<Player>, path: String) {
         let key = format!("{}_v{}", fp, CACHE_VERSION);
         let cache_path = cache_root().join(format!("{key}.jpg"));
 
-        // Cache hit: emit the cached sprite as fully-filled and skip
-        // extraction. The thumbnailer mpv still needs to load the file
-        // (so dense-window requests can use it) — do that after emitting.
+        // Legacy cache hit (sprite from a previous version that DID
+        // pre-extract). Emit it as fully-filled — free instant preview —
+        // then load the file in the thumbnailer so dense / exact requests
+        // can seek on it. New files no longer create cache entries: the
+        // sprite is purely lazy now, populated by request_dense_window
+        // on hover, with the JS-side LRU as the only persistence layer.
         if cache_path.exists() {
             if let Ok(bytes) = fs::read(&cache_path) {
                 if let Some(meta) = read_cached_layout(&bytes) {
                     crate::np_info!(
                         "thumb",
-                        "cache HIT key={} count={} cols={} rows={}",
-                        key, meta.count, meta.cols, meta.rows
+                        "legacy cache HIT key={} count={} (no new caches written)",
+                        key, meta.count
                     );
                     let b64 = general_purpose::STANDARD.encode(&bytes);
                     let _ = app.emit(
@@ -167,20 +159,21 @@ pub fn start_thumbnail_job(app: AppHandle, thumb: Arc<Player>, path: String) {
                             tile_height: TILE_H,
                         },
                     );
-                    // Still load the file in the thumbnailer mpv so
-                    // request_dense_window has something to seek on.
-                    if let Ok(_g) = worker_lock().lock() {
-                        let _ = thumb.load(&path);
-                        let _ = wait_for_load(&thumb);
-                    }
-                    return;
                 }
             }
         }
 
-        crate::np_info!("thumb", "cache MISS key={}, extracting baseline", key);
-        if let Err(e) = extract_baseline(&app, &thumb, &path, &cache_path) {
-            crate::np_err!("thumb", "baseline extraction failed: {e}");
+        // Always load the file in the thumbnailer mpv so dense / exact
+        // requests have something to seek on. No baseline extraction —
+        // hover requests do all the work on demand.
+        if let Ok(_g) = worker_lock().lock() {
+            if let Err(e) = thumb.load(&path) {
+                crate::np_err!("thumb", "thumbnailer load failed: {e}");
+                return;
+            }
+            if let Err(e) = wait_for_load(&thumb) {
+                crate::np_err!("thumb", "thumbnailer wait_for_load: {e}");
+            }
         }
     });
 }
@@ -223,12 +216,23 @@ pub fn request_dense_window(
     thread::spawn(move || {
         let started = std::time::Instant::now();
         let tmp_root = std::env::temp_dir().join("trace-player-thumb-tmp");
+        // Best-effort cleanup of leftover tiles from previous runs
+        if let Ok(entries) = std::fs::read_dir(&tmp_root) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.extension().map(|e| e == "jpg").unwrap_or(false) {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+        }
         let _ = fs::create_dir_all(&tmp_root);
         let tid = format!("{:?}", std::thread::current().id())
             .replace(['(', ')', ' ', '\"'], "");
+        let seq = THUMB_COUNTER.fetch_add(1, Ordering::Relaxed);
         let tmp_tile = tmp_root.join(format!(
-            "tile-{}-{}-dense.jpg",
+            "tile-{}-{}-{}-dense.jpg",
             std::process::id(),
+            seq,
             tid
         ));
 
@@ -325,12 +329,23 @@ pub fn request_exact_frame(app: AppHandle, thumb: Arc<Player>, t: f64) {
     thread::spawn(move || {
         let started = std::time::Instant::now();
         let tmp_root = std::env::temp_dir().join("trace-player-thumb-tmp");
+        // Best-effort cleanup of leftover tiles from previous runs
+        if let Ok(entries) = std::fs::read_dir(&tmp_root) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.extension().map(|e| e == "jpg").unwrap_or(false) {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+        }
         let _ = fs::create_dir_all(&tmp_root);
         let tid = format!("{:?}", std::thread::current().id())
             .replace(['(', ')', ' ', '\"'], "");
+        let seq = THUMB_COUNTER.fetch_add(1, Ordering::Relaxed);
         let tmp_tile = tmp_root.join(format!(
-            "tile-{}-{}-exact.jpg",
+            "tile-{}-{}-{}-exact.jpg",
             std::process::id(),
+            seq,
             tid
         ));
 
@@ -388,90 +403,6 @@ pub fn request_exact_frame(app: AppHandle, thumb: Arc<Player>, t: f64) {
     });
 }
 
-fn extract_baseline(
-    app: &AppHandle,
-    thumb: &Player,
-    path: &str,
-    cache_path: &PathBuf,
-) -> Result<(), String> {
-    // File load is exclusive — dense jobs must wait until mpv has the file
-    // before they try to seek on it.
-    {
-        let _g = worker_lock()
-            .lock()
-            .map_err(|e| format!("worker lock poisoned: {e}"))?;
-        thumb.load(path)?;
-        wait_for_load(thumb)?;
-    }
-
-    let duration = thumb
-        .get_property_f64("duration")
-        .ok_or_else(|| "no duration".to_string())?;
-    if !duration.is_finite() || duration <= 0.0 {
-        return Err("invalid duration".to_string());
-    }
-
-    let count = adaptive_count(duration);
-    let cols = COLS;
-    let rows = count.div_ceil(cols);
-
-    let mut sprite = RgbImage::new(cols * TILE_W, rows * TILE_H);
-
-    let temp_root = std::env::temp_dir().join("trace-player-thumb-tmp");
-    let _ = fs::create_dir_all(&temp_root);
-    let tmp_tile = temp_root.join(format!("tile-{}-baseline.jpg", std::process::id()));
-    // Baseline runs without a cancel token (the active dense job is what
-    // gets cancelled, not vice versa) — pass a never-cancelled flag.
-    let no_cancel = Arc::new(AtomicBool::new(false));
-
-    for i in 0..count {
-        // +0.5 centers the tile in its 1/count slice; avoids the cold-open
-        // black frame at i=0 and the EOF tail at i=count-1.
-        let t = ((i as f64 + 0.5) / count as f64) * duration;
-
-        let tile = match extract_one_frame(thumb, t, &tmp_tile, &no_cancel) {
-            Some(img) => img,
-            None => continue,
-        };
-
-        let dx = (i % cols) * TILE_W;
-        let dy = (i / cols) * TILE_H;
-        let _ = sprite.copy_from(&tile, dx, dy);
-
-        let filled = i + 1;
-        let last = filled == count;
-        if last || filled % PROGRESSIVE_EMIT_EVERY == 0 {
-            if let Some(bytes) = encode_jpeg(&sprite, 75) {
-                let b64 = general_purpose::STANDARD.encode(&bytes);
-                let _ = app.emit(
-                    "mpv:thumbnails-ready",
-                    ThumbnailReady {
-                        b64,
-                        count,
-                        filled,
-                        cols,
-                        rows,
-                        tile_width: TILE_W,
-                        tile_height: TILE_H,
-                    },
-                );
-
-                // Persist on the final emit only — partial sprites aren't
-                // worth caching.
-                if last {
-                    if let Some(parent) = cache_path.parent() {
-                        let _ = fs::create_dir_all(parent);
-                    }
-                    let _ = fs::write(cache_path, &bytes);
-                }
-            }
-        }
-    }
-
-    let _ = fs::remove_file(&tmp_tile);
-    Ok(())
-}
-
 /// Single seek+screenshot under WORKER_LOCK. Returns the resized RGB tile
 /// or None on any failure. Honors `cancel` between the lock acquire and
 /// the actual mpv work so a stale dense job exits before doing more I/O.
@@ -515,7 +446,7 @@ fn wait_for_load(thumb: &Player) -> Result<(), String> {
         }
         match thumb.wait_event(0.5) {
             MpvEvent::FileLoaded => return Ok(()),
-            MpvEvent::EndFile => return Err("thumbnailer end-of-file before load".to_string()),
+            MpvEvent::EndFile { .. } => return Err("thumbnailer end-of-file before load".to_string()),
             MpvEvent::Shutdown => return Err("thumbnailer shut down".to_string()),
             _ => continue,
         }
@@ -534,20 +465,10 @@ fn wait_for_seek(thumb: &Player, timeout: Duration) {
         }
         match thumb.wait_event(remaining.min(0.2)) {
             MpvEvent::PlaybackRestart => return,
-            MpvEvent::Shutdown | MpvEvent::EndFile => return,
+            MpvEvent::Shutdown | MpvEvent::EndFile { .. } => return,
             _ => continue,
         }
     }
-}
-
-/// Hybrid baseline density: target ~150 tiles for normal-length files,
-/// scale down for very short clips to avoid oversampling, floor at 20 so
-/// the sprite is still useful for tiny files.
-fn adaptive_count(duration_seconds: f64) -> u32 {
-    let by_interval = (duration_seconds / BASELINE_MIN_INTERVAL_S).ceil() as u32;
-    BASELINE_TARGET
-        .min(by_interval.max(BASELINE_MIN))
-        .max(1)
 }
 
 fn load_and_normalize(path: &PathBuf) -> Option<RgbImage> {

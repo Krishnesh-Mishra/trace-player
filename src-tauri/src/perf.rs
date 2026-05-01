@@ -107,10 +107,56 @@ pub fn apply(
     resolved: &ResolvedPerf,
     shader_dir: Option<&PathBuf>,
 ) -> Result<(), String> {
+    let is_battery_saver = resolved.effective == "battery_saver";
+    // Battery-saver baseline first so the per-feature applies below can still
+    // override individual knobs if needed. When leaving battery mode this
+    // restores the quality defaults that profile=fast knocked down.
+    apply_battery_extras(player, is_battery_saver)?;
     apply_upscaling(player, &resolved.upscaling, shader_dir)?;
     apply_interpolation(player, &resolved.interpolation)?;
     apply_hdr(player, &resolved.hdr_mode)?;
-    apply_vsync(player, resolved.vsync)?;
+    // In battery mode video-sync is already pinned to "audio" by the extras;
+    // honouring resolved.vsync would just flip back to display-resample.
+    if !is_battery_saver {
+        apply_vsync(player, resolved.vsync)?;
+    }
+    Ok(())
+}
+
+/// Battery-saver-only extras. Toggles the heavier render-side knobs that the
+/// upscaling / interpolation appliers don't touch. Run with `true` when
+/// entering BatterySaver, `false` when leaving — the false branch undoes the
+/// quality-killing parts of `profile=fast` so the next profile starts clean.
+pub fn apply_battery_extras(player: &Player, is_battery_saver: bool) -> Result<(), String> {
+    if is_battery_saver {
+        // mpv's built-in low-power preset. Sets a bunch of knobs at once:
+        // bilinear scalers, no deband, no dither, no HDR peak detect,
+        // video-sync=audio. We re-set the same values explicitly below so
+        // the inverse branch can revert them deterministically.
+        let _ = player.set_string_prop_pub("profile", "fast");
+        // Cheapest scaler chain end-to-end — luma + chroma + downscale.
+        let _ = player.set_string_prop_pub("scale", "bilinear");
+        let _ = player.set_string_prop_pub("cscale", "bilinear");
+        let _ = player.set_string_prop_pub("dscale", "bilinear");
+        // Visible-quality knobs that cost real GPU power.
+        let _ = player.set_string_prop_pub("deband", "no");
+        let _ = player.set_string_prop_pub("dither-depth", "no");
+        let _ = player.set_string_prop_pub("hdr-compute-peak", "no");
+        // Decode shortcut — skip in-loop deblock filter on non-reference
+        // frames. Saves ~5-10% decoder CPU on H.264/HEVC at a quality cost
+        // that's barely perceptible on a laptop panel.
+        let _ = player.set_string_prop_pub("vd-lavc-skiploopfilter", "nonref");
+        // audio sync drops display-resample's per-frame CPU + GPU work.
+        let _ = player.set_string_prop_pub("video-sync", "audio");
+    } else {
+        // Restore the quality defaults set in Player::new(). The scaler
+        // chain (scale/cscale/dscale) is re-set by apply_upscaling right
+        // after this returns, so we don't touch it here.
+        let _ = player.set_string_prop_pub("deband", "yes");
+        let _ = player.set_string_prop_pub("dither-depth", "auto");
+        let _ = player.set_string_prop_pub("hdr-compute-peak", "yes");
+        let _ = player.set_string_prop_pub("vd-lavc-skiploopfilter", "default");
+    }
     Ok(())
 }
 

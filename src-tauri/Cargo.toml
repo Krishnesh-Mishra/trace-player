@@ -25,6 +25,15 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 sha1 = "0.10"
 hex = "0.4"
 base64 = "0.22"
+mimalloc = { version = "0.1", default-features = false }
+ureq = { version = "2", features = ["json", "tls"] }
+# Archive support (Slice 3): zip is pure Rust, sevenz-rust is pure Rust;
+# unrar wraps the upstream UnRAR C lib (vendored). All three feed a shared
+# trait in archive.rs so the lazy-extract + LRU code is format-agnostic.
+zip = { version = "~0.6", default-features = false, features = ["deflate"] }
+sevenz-rust = "~0.6"
+unrar = "~0.5"
+filetime = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
@@ -40,3 +49,15 @@ windows = { version = "0.58", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# Aggressive release profile — LTO + single codegen unit unlock cross-crate
+# inlining (~10-15% perf), strip removes debug sections (~30% smaller binary),
+# panic=abort drops the unwind landing pads (smaller binary, slightly faster).
+# incremental=false is required for fat LTO to actually do its job.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+strip = true
+panic = "unwind"
+incremental = false

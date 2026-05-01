@@ -139,6 +139,10 @@ interface ControlBarProps {
   onFullscreenToggle: () => void;
   onHoverChange: (hovering: boolean) => void;
   onOpenFile: () => void;
+  onSourceLocal: () => void;
+  onSourceNetwork: () => void;
+  onSourceRecent: () => void;
+  showThumbnails?: boolean;
 }
 
 export default function ControlBar(props: ControlBarProps) {
@@ -217,6 +221,10 @@ export default function ControlBar(props: ControlBarProps) {
     onSkipForward,
     onFullscreenToggle,
     onHoverChange,
+    onSourceLocal,
+    onSourceNetwork,
+    onSourceRecent,
+    showThumbnails = true,
   } = props;
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -491,6 +499,9 @@ export default function ControlBar(props: ControlBarProps) {
           onAlwaysOnTopToggle={onAlwaysOnTopToggle}
           onJumpToTime={onJumpToTime}
           onMediaInfo={onMediaInfo}
+          onSourceLocal={onSourceLocal}
+          onSourceNetwork={onSourceNetwork}
+          onSourceRecent={onSourceRecent}
         />
       </div>
     </>
@@ -526,6 +537,7 @@ export default function ControlBar(props: ControlBarProps) {
           chapters={chapters}
           size={appearance.seekBarSize}
           markerStyle={appearance.chapterMarkers}
+          showThumbnails={showThumbnails}
         />
 
         {centeredPlayback ? (
