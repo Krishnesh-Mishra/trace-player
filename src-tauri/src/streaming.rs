@@ -134,8 +134,8 @@ impl StreamingSession {
         //       10048)". Disabling persistence lets it pick a fresh port.
         // SERVER-START options (after `start`):
         //   --disable-persistence    don't write torrent session JSON
-        let mut child = Command::new(rqbit_exe)
-            .arg("--http-api-listen-addr")
+        let mut cmd = Command::new(rqbit_exe);
+        cmd.arg("--http-api-listen-addr")
             .arg("127.0.0.1:0")
             .arg("--disable-dht-persistence")
             .arg("server")
@@ -143,7 +143,16 @@ impl StreamingSession {
             .arg("--disable-persistence")
             .arg(session_dir)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("spawn rqbit.exe: {e}"))?;
 

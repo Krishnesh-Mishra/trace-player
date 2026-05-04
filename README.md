@@ -362,3 +362,9 @@ media-player/
 - **Frame-step** (single frame advance/back) via mpv `frame-step` / `frame-back-step`
 - **Remember last-played position per file** — resume playback from where you left off
 - **macOS layer-based embedding** — currently only Windows (HWND) and Linux (X11 XID) are wired
+
+
+--- 
+
+
+- By Krishnesh Mishra

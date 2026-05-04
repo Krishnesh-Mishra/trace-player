@@ -122,20 +122,30 @@ export default function LoadingSourceOverlay() {
         setCacheBuffering(e.payload);
       })
     );
+    const dismissOverlay = () => {
+      activeRef.current = false;
+      setPayload(null);
+      setStats(null);
+      setCacheBuffering(-1);
+    };
     // Primary dismiss: fires exactly when mpv decodes the first frame and is
     // ready to display. This is the precise "frame is ready" signal.
     unlisteners.push(
       listen<unknown>("mpv:playback-restart", () => {
         if (!activeRef.current) return;
-        activeRef.current = false;
-        setPayload(null);
-        setStats(null);
-        setCacheBuffering(-1);
+        dismissOverlay();
+      })
+    );
+    // Dismiss when the first real frame renders after a stall.
+    unlisteners.push(
+      listen<unknown>("mpv:frame-changed", () => {
+        if (!activeRef.current) return;
+        dismissOverlay();
       })
     );
     // Fallback dismiss paths in case playback-restart is missed:
     //   1. file-loaded arms a pending dismiss flag.
-    //   2. time-pos > 0 executes the dismiss if armed.
+    //   2. Any time-pos tick executes the dismiss if armed.
     const pendingDismissRef = { current: false };
     unlisteners.push(
       listen<string>("mpv:file-loaded", () => {
@@ -145,12 +155,9 @@ export default function LoadingSourceOverlay() {
     unlisteners.push(
       listen<number>("mpv:time-pos", (e) => {
         if (!activeRef.current) return;
-        if (e.payload > 0 || pendingDismissRef.current) {
+        if (e.payload >= 0 && pendingDismissRef.current) {
           pendingDismissRef.current = false;
-          activeRef.current = false;
-          setPayload(null);
-          setStats(null);
-          setCacheBuffering(-1);
+          dismissOverlay();
         }
       })
     );
@@ -205,7 +212,7 @@ export default function LoadingSourceOverlay() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0, transition: { duration: 0.2 } }}
           transition={{ duration: 0.15 }}
-          className="absolute inset-0 z-[45] flex items-center justify-center
+          className="absolute inset-0 z-[9999] flex items-center justify-center
                      pointer-events-auto bg-black/35"
         >
           <motion.div

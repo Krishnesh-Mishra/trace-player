@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Trace Player",
-  "version": "0.1.0",
-  "identifier": "com.krish.traceplayer",
+  "version": "1.0.0",
+  "identifier": "com.krishnesh.traceplayer",
   "build": {
     "beforeDevCommand": "npm run vite",
     "devUrl": "http://localhost:1420",

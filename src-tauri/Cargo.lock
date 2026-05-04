@@ -2146,32 +2146,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2532096657941c2fea9c289d370a250971c689d4f143798ff67113ec042024a5"
 
 [[package]]
-name = "media-player"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "filetime",
- "hex",
- "image",
- "mimalloc",
- "raw-window-handle",
- "serde",
- "serde_json",
- "sevenz-rust",
- "sha1",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tauri-plugin-store",
- "unrar",
- "ureq",
- "windows 0.58.0",
- "zip",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4527,6 +4501,32 @@ name = "tower-service"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
+
+[[package]]
+name = "trace-player"
+version = "1.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "filetime",
+ "hex",
+ "image",
+ "mimalloc",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "sevenz-rust",
+ "sha1",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-store",
+ "unrar",
+ "ureq",
+ "windows 0.58.0",
+ "zip",
+]
 
 [[package]]
 name = "tracing"

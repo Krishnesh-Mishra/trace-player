@@ -53,11 +53,22 @@ export default function BufferingBanner({
 }) {
   const [active, setActive] = useState(false);
   const [stats, setStats] = useState<TorrentStats | null>(null);
-  // Two-phase dismiss: paused-for-cache=false OR playback-restart arms
-  // pendingDismiss; the next time-pos tick (confirming a decoded frame)
-  // executes the actual dismiss to avoid flickering on torrent seeks.
-  const pendingDismissRef = useRef(false);
+  // Rust arms pending_frame_dismiss when paused-for-cache clears or
+  // PLAYBACK_RESTART fires, then fires mpv:frame-changed on the first
+  // rendered video frame. JS dismisses on that signal — not on time-pos
+  // (which advances with the audio clock even while video is still frozen).
   const activeRef = useRef(false);
+  // Fallback tick counter: for audio-only files where video-frame-info never
+  // changes, dismiss after ~3 s of continuous time-pos advancement instead.
+  const fallbackTicksRef = useRef(0);
+  const FALLBACK_TICKS = 30; // ~3 s at 10 Hz
+
+  const dismiss = () => {
+    fallbackTicksRef.current = 0;
+    activeRef.current = false;
+    setActive(false);
+    setStats(null);
+  };
 
   useEffect(() => {
     const unlisteners: Array<Promise<() => void>> = [];
@@ -65,30 +76,42 @@ export default function BufferingBanner({
     unlisteners.push(
       listen<boolean>("mpv:paused-for-cache", (e) => {
         if (e.payload) {
-          pendingDismissRef.current = false;
+          fallbackTicksRef.current = 0;
           activeRef.current = true;
           setActive(true);
-        } else {
-          // Cache refilled — arm the dismiss and wait for a decoded frame.
-          if (activeRef.current) pendingDismissRef.current = true;
         }
+        // paused-for-cache=false: Rust already armed pending_frame_dismiss;
+        // no JS action needed — we wait for mpv:frame-changed.
       })
     );
 
+    // Primary dismiss: Rust emits this the moment the VO renders a new frame
+    // after a stall, so the spinner stays until the freeze visually ends.
+    unlisteners.push(
+      listen<unknown>("mpv:frame-changed", () => {
+        if (activeRef.current) dismiss();
+      })
+    );
+
+    // Secondary dismiss: playback-restart fires when mpv's decode pipeline
+    // restarts after a cache stall. In production builds, video-frame-info
+    // can lag behind, so this acts as a reliable backup.
     unlisteners.push(
       listen<unknown>("mpv:playback-restart", () => {
-        if (activeRef.current) pendingDismissRef.current = true;
+        if (activeRef.current) dismiss();
       })
     );
 
-    // time-pos only ticks when mpv is outputting frames — confirms dismiss.
+    // Fallback dismiss for audio-only files: video-frame-info never fires so
+    // mpv:frame-changed never arrives. Accept N consecutive time-pos ticks
+    // (continuous audio advancement) as a proxy for "playback is running".
     unlisteners.push(
       listen<number>("mpv:time-pos", () => {
-        if (activeRef.current && pendingDismissRef.current) {
-          pendingDismissRef.current = false;
-          activeRef.current = false;
-          setActive(false);
-          setStats(null);
+        if (activeRef.current) {
+          fallbackTicksRef.current++;
+          if (fallbackTicksRef.current >= FALLBACK_TICKS) dismiss();
+        } else {
+          fallbackTicksRef.current = 0;
         }
       })
     );
@@ -96,7 +119,7 @@ export default function BufferingBanner({
     // Reset when a new source starts loading so stale state doesn't bleed.
     unlisteners.push(
       listen<unknown>("mpv:source-loading", () => {
-        pendingDismissRef.current = false;
+        fallbackTicksRef.current = 0;
         activeRef.current = false;
         setActive(false);
         setStats(null);
@@ -136,7 +159,7 @@ export default function BufferingBanner({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0, transition: { duration: 0.2 } }}
           transition={{ duration: 0.15 }}
-          className="absolute inset-0 z-[45] flex items-center justify-center pointer-events-auto bg-black/30"
+          className="absolute inset-0 z-[9999999] flex items-center justify-center pointer-events-auto bg-black/30"
         >
           <motion.div
             initial={{ scale: 0.96, y: 4 }}

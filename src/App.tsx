@@ -164,6 +164,9 @@ export default function App() {
   const [, setBufferingForCache] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isLocalFile, setIsLocalFile] = useState(false);
+  const isLocalFileRef = useRef(false);
+  const [hoverPreview, setHoverPreview] = useState(false);
+  const hoverPreviewRef = useRef(false);
   const [isSeeking, setIsSeeking] = useState(false);
   const isSeekingRef = useRef(false);
   const isLoadingRef = useRef(false);
@@ -211,6 +214,8 @@ export default function App() {
   useEffect(() => { abLoopBRef.current = abLoopB; }, [abLoopB]);
   useEffect(() => { isSeekingRef.current = isSeeking; }, [isSeeking]);
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
+  useEffect(() => { isLocalFileRef.current = isLocalFile; }, [isLocalFile]);
+  useEffect(() => { hoverPreviewRef.current = hoverPreview; }, [hoverPreview]);
 
   // ── mpv event subscriptions ─────────────────────────────────────────────────
   useEffect(() => {
@@ -223,15 +228,18 @@ export default function App() {
         const target = seekTargetRef.current;
         if (target !== null) {
           if (Math.abs(t - target) < 0.5) {
-            // time-pos arrived at the seek target — frame is decoded.
-            // Dismiss the spinner here as a fallback for paused seeks
-            // (mpv:playback-restart may not fire when staying paused).
-            seekTargetRef.current = null;
-            if (seekIndicatorTimerRef.current) {
-              clearTimeout(seekIndicatorTimerRef.current);
-              seekIndicatorTimerRef.current = null;
+            // Local files only: time-pos at target means the frame is decoded.
+            // Non-local seeks use mpv:frame-changed (actual VO frame) instead
+            // because time-pos follows the audio clock and can advance while
+            // the video output is still frozen during torrent/HTTP seeks.
+            if (isLocalFileRef.current) {
+              seekTargetRef.current = null;
+              if (seekIndicatorTimerRef.current) {
+                clearTimeout(seekIndicatorTimerRef.current);
+                seekIndicatorTimerRef.current = null;
+              }
+              setIsSeeking(false);
             }
-            setIsSeeking(false);
           } else {
             return;
           }
@@ -242,11 +250,36 @@ export default function App() {
       })
     );
 
-    // mpv fires playback-restart when a new frame is decoded and ready to
-    // display — after seeks (playing or paused), after buffering, after pause.
-    // This is the primary "frame is ready" signal to dismiss the seek spinner.
+    // Local-file seeks: PLAYBACK_RESTART is reliable (fires once, data is
+    // already on disk). Non-local seeks skip this — PLAYBACK_RESTART fires
+    // multiple spurious times right after the seek command before any data
+    // arrives, so using it for non-local dismissed the spinner in <100 ms.
+    // Guard on isSeekingRef: drag seeks (fireDragSeek, isSeeking=false) also
+    // trigger PLAYBACK_RESTART. Without this guard, the keyframe-mode seek
+    // landing clears seekTargetRef before handleSeekCommit fires, opening a
+    // window where time-pos events at the keyframe position bleed through and
+    // cause a visible 10-20s position jump before the exact seek resolves.
     unlisteners.push(
       listen<unknown>("mpv:playback-restart", () => {
+        if (!isLocalFileRef.current) return;
+        if (!isSeekingRef.current) return;
+        if (seekIndicatorTimerRef.current) {
+          clearTimeout(seekIndicatorTimerRef.current);
+          seekIndicatorTimerRef.current = null;
+        }
+        seekTargetRef.current = null;
+        setIsSeeking(false);
+      })
+    );
+
+    // Non-local seeks (stream / torrent): dismiss the seek spinner only when
+    // Rust confirms 5 consecutive rendered video frames after a seek/buffering
+    // cycle — not on PLAYBACK_RESTART which fires too early, and not on
+    // time-pos which advances with the audio clock even while video is frozen.
+    unlisteners.push(
+      listen<unknown>("mpv:frame-changed", () => {
+        if (isLocalFileRef.current) return; // local uses PLAYBACK_RESTART above
+        if (!isSeekingRef.current) return;
         if (seekIndicatorTimerRef.current) {
           clearTimeout(seekIndicatorTimerRef.current);
           seekIndicatorTimerRef.current = null;
@@ -439,6 +472,21 @@ export default function App() {
         setProgress(0);
         setCurrentTime(0);
         seekTargetRef.current = null;
+        // Reset all seek state: a previous seek (committed or drag) may still
+        // be in-flight when the file changes. Without this, isSeeking stays
+        // true and blocks all keyboard/UI controls on the new file. Also
+        // cancel any pending drag-seek timer so it can't fire a seek against
+        // the new file at the old video's position.
+        setIsSeeking(false);
+        if (seekIndicatorTimerRef.current) {
+          clearTimeout(seekIndicatorTimerRef.current);
+          seekIndicatorTimerRef.current = null;
+        }
+        if (dragSeekTimerRef.current !== null) {
+          clearTimeout(dragSeekTimerRef.current);
+          dragSeekTimerRef.current = null;
+        }
+        dragSeekPendingRef.current = null;
         setThumbnails(null);
         denseThumbsRef.current.clear();
         setDenseTick((n) => (n + 1) | 0);
@@ -462,7 +510,7 @@ export default function App() {
         // don't need local seek previews.
         const isLocal = path.length > 0 && !isNetwork;
         setIsLocalFile(isLocal);
-        if (isLocal) {
+        if (isLocal && hoverPreviewRef.current) {
           invoke("start_thumbnailing", { path }).catch(() => {});
         }
       })
@@ -470,6 +518,10 @@ export default function App() {
 
     unlisteners.push(
       listen<boolean>("mpv:power-state", (e) => setOnBattery(e.payload))
+    );
+
+    unlisteners.push(
+      listen<boolean>("mpv:hover-preview-enabled", (e) => setHoverPreview(e.payload))
     );
 
     unlisteners.push(
@@ -956,7 +1008,7 @@ export default function App() {
   // request at the cursor's precise time. The exact frame arrives a beat
   // later but pins the preview to the user's hover position pixel-precise.
   const requestThumbWindow = useCallback((t: number) => {
-    if (!hasFileRef.current) return;
+    if (!hasFileRef.current || !hoverPreviewRef.current) return;
     const d = durationRef.current;
     if (d <= 0 || !isFinite(t)) return;
     log.debug("thumb", `hover settle t=${t.toFixed(3)}s — request window+exact`);
@@ -1563,7 +1615,7 @@ export default function App() {
     // Safety fallback — cleared early by mpv:playback-restart (primary) or
     // mpv:time-pos landing at the seek target (paused-seek backup).
     if (seekIndicatorTimerRef.current) clearTimeout(seekIndicatorTimerRef.current);
-    seekIndicatorTimerRef.current = setTimeout(() => setIsSeeking(false), 8000);
+    seekIndicatorTimerRef.current = setTimeout(() => setIsSeeking(false), 100000);
     seekAbsolutePct(p);
   };
 
@@ -2057,7 +2109,7 @@ export default function App() {
             onSourceLocal={handleOpenFile}
             onSourceNetwork={() => setOpenSourceOpen(true)}
             onSourceRecent={() => setRecentPanelOpen(true)}
-            showThumbnails={isLocalFile}
+            showThumbnails={isLocalFile && hoverPreview}
           />
         )}
       </AnimatePresence>

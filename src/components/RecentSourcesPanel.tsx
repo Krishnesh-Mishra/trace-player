@@ -125,7 +125,7 @@ export default function RecentSourcesPanel({
                 Nothing here yet — files and URLs you open will show up.
               </div>
             ) : (
-              recents.map((p, idx) => {
+              recents.map((p) => {
                 const c = classify(p);
                 return (
                   <button

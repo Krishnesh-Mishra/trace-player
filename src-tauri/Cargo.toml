@@ -1,8 +1,8 @@
 [package]
-name = "media-player"
-version = "0.1.0"
+name = "trace-player"
+version = "1.0.0"
 description = "Trace Player — modern desktop video player"
-authors = ["krish"]
+authors = ["krishnesh"]
 edition = "2021"
 
 [lib]

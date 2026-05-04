@@ -27,6 +27,9 @@ const TAG_PLAYLIST: u64 = 11;
 const TAG_PLAYLIST_POS: u64 = 12;
 const TAG_PAUSED_FOR_CACHE: u64 = 13;
 const TAG_CACHE_BUFFERING: u64 = 14;
+// Fires whenever the VO displays a new video frame — not audio-clock-driven.
+// Used as the definitive "frame actually changed on screen" signal.
+const TAG_VIDEO_FRAME: u64 = 15;
 
 #[derive(Serialize, Clone)]
 pub struct Chapter {
@@ -67,6 +70,10 @@ pub fn start_event_loop(
         // is about to resume; the frontend uses this as the "ready to play"
         // progress bar instead of the misleading total-download percentage.
         ("cache-buffering-state", MPV_FORMAT_NONE, TAG_CACHE_BUFFERING),
+        // Fires once per rendered frame at the VO. Only change that matters is
+        // that a new frame was displayed — we never read the property value,
+        // MPV_FORMAT_NONE is enough.
+        ("video-frame-info", MPV_FORMAT_NONE, TAG_VIDEO_FRAME),
     ];
 
     for (name, fmt, tag) in observers {
@@ -83,10 +90,35 @@ pub fn start_event_loop(
     }
     crate::np_info!("events", "event loop starting, observing {} properties", observers.len());
 
-    thread::spawn(move || loop {
+    thread::spawn(move || {
+        // Armed ONLY when paused-for-cache transitions false (cache refilled).
+        // NOT armed on PLAYBACK_RESTART — that event fires multiple spurious
+        // times after a seek (seek-ack, internal pipeline flush, etc.) long
+        // before frames actually render, so using it caused premature dismissal.
+        let mut pending_frame_dismiss = false;
+        // Require this many consecutive video-frame-info changes before
+        // emitting mpv:frame-changed. A single I-frame keyframe preview after
+        // a seek produces only 1–2 changes then freezes; sustained playback
+        // increments this counter past the threshold in under 250 ms at 24 fps.
+        let mut frame_dismiss_count: u32 = 0;
+        const FRAME_DISMISS_THRESHOLD: u32 = 5;
+
+      loop {
         match player.wait_event(-1.0) {
             MpvEvent::PropertyChange { tag } => {
-                handle_property_change(&app, &player, &agc, &ui, tag);
+                if tag == TAG_VIDEO_FRAME {
+                    if pending_frame_dismiss {
+                        frame_dismiss_count += 1;
+                        crate::np_debug!("events", "frame-dismiss count={}/{}", frame_dismiss_count, FRAME_DISMISS_THRESHOLD);
+                        if frame_dismiss_count >= FRAME_DISMISS_THRESHOLD {
+                            pending_frame_dismiss = false;
+                            frame_dismiss_count = 0;
+                            let _ = app.emit("mpv:frame-changed", ());
+                        }
+                    }
+                } else {
+                    handle_property_change(&app, &player, &agc, &ui, tag, &mut pending_frame_dismiss, &mut frame_dismiss_count);
+                }
             }
             MpvEvent::FileLoaded => {
                 // Path string is sent so the frontend can kick thumbnailing
@@ -175,16 +207,19 @@ pub fn start_event_loop(
             }
             MpvEvent::PlaybackRestart => {
                 crate::np_debug!("events", "PLAYBACK_RESTART");
-                // Fired by mpv whenever playback resumes — after a seek
-                // completes, after a paused-for-cache stall clears, after
-                // initial file load. The frontend uses this as the definitive
-                // "video is actually rendering frames" signal to dismiss the
-                // buffering overlay (paused-for-cache=false alone fires too
-                // early, before the first frame is decoded).
+                // Arm the frame-dismiss and reset the count. Resetting on every
+                // restart means only N *consecutive* frames after the most recent
+                // pipeline restart are counted — old partial counts from earlier
+                // spurious restarts can't bleed into the final check.
+                // paused-for-cache=true will disarm if buffering starts, so a
+                // spurious early restart followed by a stall is safe.
+                pending_frame_dismiss = true;
+                frame_dismiss_count = 0;
                 let _ = app.emit("mpv:playback-restart", ());
             }
             MpvEvent::Other => {}
         }
+      }
     });
 }
 
@@ -194,6 +229,8 @@ fn handle_property_change(
     agc: &AgcController,
     ui: &UiController,
     tag: u64,
+    pending_frame_dismiss: &mut bool,
+    frame_dismiss_count: &mut u32,
 ) {
     // High-frequency properties (time-pos updates ~10×/s) are not logged here;
     // logging them would dwarf everything else. Lower-frequency state changes
@@ -253,10 +290,22 @@ fn handle_property_change(
             }
         }
         TAG_PAUSED_FOR_CACHE => {
-            // Network playback signal: mpv stalled waiting for the demuxer
-            // cache to refill. Emitted both as `true` (buffering started)
-            // and `false` (resumed) — frontend toggles a small overlay.
             if let Some(v) = player.get_property_flag("paused-for-cache") {
+                if v {
+                    // New stall: cancel pending dismiss and reset frame count
+                    // so a stale partial count from a prior cycle can't bleed
+                    // into the next one.
+                    *pending_frame_dismiss = false;
+                    *frame_dismiss_count = 0;
+                } else {
+                    // Cache refilled: arm dismiss and clear counter. We wait
+                    // for FRAME_DISMISS_THRESHOLD consecutive video-frame-info
+                    // changes before signalling JS — a single keyframe preview
+                    // only produces 1-2 changes then stalls, sustained playback
+                    // hits the threshold in under 250 ms at 24 fps.
+                    *pending_frame_dismiss = true;
+                    *frame_dismiss_count = 0;
+                }
                 if let Err(e) = app.emit("mpv:paused-for-cache", v) { eprintln!("[events] emit failed: {e}"); }
             }
         }

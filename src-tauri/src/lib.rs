@@ -263,6 +263,7 @@ pub fn run() {
                     if let Ok(handle) = window.window_handle() {
                         if let RawWindowHandle::Win32(h) = handle.as_raw() {
                             let parent_hwnd = h.hwnd.get();
+                            set_window_black_background(parent_hwnd);
                             if let Some(wv) = ui_visibility::find_webview(parent_hwnd) {
                                 np_info!("ui", "found WebView2 HWND {:#x}", wv);
                                 ui_for_setup.set_webview_hwnd(wv);
@@ -328,6 +329,8 @@ pub fn run() {
 
             // First-launch CLI arg ("Open with" → we are the new process).
             let argv: Vec<String> = std::env::args().collect();
+            let hover_preview = argv.iter().any(|a| a == "--hover" || a == "--hover=true");
+            let _ = app.handle().emit("mpv:hover-preview-enabled", hover_preview);
             if let Some(path) = first_file_arg(&argv) {
                 let app_handle = app.handle().clone();
                 std::thread::spawn(move || {
@@ -686,6 +689,32 @@ fn handle_taskbar(player: &Arc<Player>, cmd: taskbar::TaskbarCommand) {
         }
         taskbar::TaskbarCommand::Prev => {
             let _ = player.command(&["playlist-prev", "weak"]);
+        }
+    }
+}
+
+/// Paint the Win32 parent HWND's background solid black so it appears behind
+/// every child surface (mpv render child, WebView2 child). Without this the
+/// Tauri transparent window shows the desktop through any unrendered region —
+/// before a file loads, letterbox bars, or brief inter-frame gaps.
+///
+/// SetClassLongPtrW with GCLP_HBRBACKGROUND (-10) installs the brush on the
+/// window's class so WM_ERASEBKGND paints black. InvalidateRect forces an
+/// immediate repaint so the effect is visible before the first mpv frame.
+#[cfg(target_os = "windows")]
+fn set_window_black_background(hwnd: isize) {
+    use windows::Win32::Foundation::{BOOL, COLORREF, HWND};
+    use windows::Win32::Graphics::Gdi::{CreateSolidBrush, InvalidateRect};
+    use windows::Win32::UI::WindowsAndMessaging::{SetClassLongPtrW, GET_CLASS_LONG_INDEX};
+
+    const GCLP_HBRBACKGROUND: GET_CLASS_LONG_INDEX = GET_CLASS_LONG_INDEX(-10i32);
+
+    unsafe {
+        let hwnd = HWND(hwnd as *mut core::ffi::c_void);
+        let brush = CreateSolidBrush(COLORREF(0x00000000));
+        if !brush.is_invalid() {
+            SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, brush.0 as isize);
+            let _ = InvalidateRect(hwnd, None, BOOL(1));
         }
     }
 }
