@@ -39,7 +39,6 @@
     ],
     "resources": {
       "assets/libmpv-2.dll": "bin/libmpv-2.dll",
-      "assets/yt-dlp.exe": "bin/yt-dlp.exe",
       "assets/rqbit.exe": "bin/rqbit.exe",
       "resources/shaders/*.glsl": "shaders/"
     },

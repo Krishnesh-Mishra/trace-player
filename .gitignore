@@ -28,7 +28,4 @@ dist-ssr
 src-tauri/target/
 src-tauri/Cargo.lock.bak
 
-# Bundled libmpv (downloaded by user, too large for git)
-src-tauri/assets/libmpv-2.dll
-src-tauri/assets/libmpv.dll.a
-src-tauri/assets/mpv.lib
+.claude/settings.local.json 

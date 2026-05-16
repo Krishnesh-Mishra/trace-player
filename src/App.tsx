@@ -170,6 +170,7 @@ export default function App() {
   const [isSeeking, setIsSeeking] = useState(false);
   const isSeekingRef = useRef(false);
   const isLoadingRef = useRef(false);
+  const anyOverlayOpenRef = useRef(false);
   const seekIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -214,6 +215,9 @@ export default function App() {
   useEffect(() => { abLoopBRef.current = abLoopB; }, [abLoopB]);
   useEffect(() => { isSeekingRef.current = isSeeking; }, [isSeeking]);
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
+  useEffect(() => {
+    anyOverlayOpenRef.current = jumpToTimeOpen || mediaInfoOpen || openSourceOpen || recentPanelOpen || subtitlePanelOpen || playlistOpen;
+  }, [jumpToTimeOpen, mediaInfoOpen, openSourceOpen, recentPanelOpen, subtitlePanelOpen, playlistOpen]);
   useEffect(() => { isLocalFileRef.current = isLocalFile; }, [isLocalFile]);
   useEffect(() => { hoverPreviewRef.current = hoverPreview; }, [hoverPreview]);
 
@@ -1246,7 +1250,8 @@ export default function App() {
       // Block all playback keys while a spinner is shown (seeking frame not
       // yet decoded, or source still loading). Letting space/arrows through
       // during this window causes mpv to toggle pause or seek on stale state.
-      if (isSeekingRef.current || isLoadingRef.current) return;
+      // Also block when any overlay/dialog is open (download, torrent, settings).
+      if (isSeekingRef.current || isLoadingRef.current || anyOverlayOpenRef.current) return;
 
       log.debug("keys", `key=${e.key}`);
 
