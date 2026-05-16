@@ -471,6 +471,60 @@ fn wait_for_seek(thumb: &Player, timeout: Duration) {
     }
 }
 
+const LIB_THUMB_W: u32 = 320;
+const LIB_THUMB_H: u32 = 180;
+
+pub fn generate_persistent_thumb(
+    thumb: &Player,
+    source_path: &str,
+    dest_path: &std::path::Path,
+) -> Result<(), String> {
+    let _g = worker_lock()
+        .lock()
+        .map_err(|e| format!("worker lock: {e}"))?;
+
+    thumb.load(source_path).map_err(|e| format!("load: {e}"))?;
+    wait_for_load(thumb)?;
+
+    let duration = thumb.get_property_f64("duration").unwrap_or(0.0);
+    if !duration.is_finite() || duration <= 0.0 {
+        return Err("no duration".to_string());
+    }
+
+    let seek_to = (duration * 0.1).min(5.0).max(0.0);
+    let t_str = format!("{:.3}", seek_to);
+    thumb
+        .command_silent(&["seek", &t_str, "absolute"])
+        .map_err(|e| format!("seek: {e}"))?;
+    wait_for_seek(thumb, Duration::from_secs(5));
+
+    let tmp_root = std::env::temp_dir().join("trace-player-thumb-tmp");
+    let _ = fs::create_dir_all(&tmp_root);
+    let tmp_file = tmp_root.join(format!("lib-{}.jpg", std::process::id()));
+    let tmp_str = tmp_file.to_str().ok_or("bad tmp path")?;
+
+    thumb
+        .screenshot_to_file(tmp_str)
+        .map_err(|e| format!("screenshot: {e}"))?;
+
+    let img = ImageReader::open(&tmp_file)
+        .map_err(|e| format!("open screenshot: {e}"))?
+        .decode()
+        .map_err(|e| format!("decode screenshot: {e}"))?;
+    let resized = img.resize_exact(LIB_THUMB_W, LIB_THUMB_H, FilterType::Lanczos3);
+    let rgb = resized.to_rgb8();
+
+    let jpeg_bytes = encode_jpeg(&rgb, 80).ok_or("jpeg encode failed")?;
+
+    if let Some(parent) = dest_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    fs::write(dest_path, &jpeg_bytes).map_err(|e| format!("write thumb: {e}"))?;
+    let _ = fs::remove_file(&tmp_file);
+
+    Ok(())
+}
+
 fn load_and_normalize(path: &PathBuf) -> Option<RgbImage> {
     let img = ImageReader::open(path).ok()?.decode().ok()?;
     let resized = img.resize_exact(TILE_W, TILE_H, FilterType::Lanczos3);

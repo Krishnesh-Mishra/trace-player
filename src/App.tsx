@@ -42,6 +42,7 @@ import SubtitleSettingsPanel, {
   DEFAULT_SUBTITLE_STYLE,
 } from "./components/SubtitleSettingsPanel";
 import DevTester from "./components/DevTester";
+import LibraryModal from "./components/library/LibraryModal";
 import GestureLayer from "./components/GestureLayer";
 import PipBar from "./components/PipBar";
 
@@ -156,6 +157,7 @@ export default function App() {
   const [mediaInfoOpen, setMediaInfoOpen] = useState(false);
   const [openSourceOpen, setOpenSourceOpen] = useState(false);
   const [recentPanelOpen, setRecentPanelOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   // Buffering visibility is owned by BufferingBanner (it listens to
   // mpv:paused-for-cache + mpv:torrent-stats itself), so App.tsx no longer
   // needs the bufferingForCache state — kept as a no-op here only because
@@ -216,8 +218,8 @@ export default function App() {
   useEffect(() => { isSeekingRef.current = isSeeking; }, [isSeeking]);
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
   useEffect(() => {
-    anyOverlayOpenRef.current = jumpToTimeOpen || mediaInfoOpen || openSourceOpen || recentPanelOpen || subtitlePanelOpen || playlistOpen;
-  }, [jumpToTimeOpen, mediaInfoOpen, openSourceOpen, recentPanelOpen, subtitlePanelOpen, playlistOpen]);
+    anyOverlayOpenRef.current = jumpToTimeOpen || mediaInfoOpen || openSourceOpen || recentPanelOpen || subtitlePanelOpen || playlistOpen || libraryOpen;
+  }, [jumpToTimeOpen, mediaInfoOpen, openSourceOpen, recentPanelOpen, subtitlePanelOpen, playlistOpen, libraryOpen]);
   useEffect(() => { isLocalFileRef.current = isLocalFile; }, [isLocalFile]);
   useEffect(() => { hoverPreviewRef.current = hoverPreview; }, [hoverPreview]);
 
@@ -1247,6 +1249,12 @@ export default function App() {
         }
       }
 
+      if (e.key === "b" || e.key === "B") {
+        e.preventDefault();
+        setLibraryOpen((o) => !o);
+        return;
+      }
+
       // Block all playback keys while a spinner is shown (seeking frame not
       // yet decoded, or source still loading). Letting space/arrows through
       // during this window causes mpv to toggle pause or seek on stale state.
@@ -2114,6 +2122,7 @@ export default function App() {
             onSourceLocal={handleOpenFile}
             onSourceNetwork={() => setOpenSourceOpen(true)}
             onSourceRecent={() => setRecentPanelOpen(true)}
+            onLibraryOpen={() => setLibraryOpen(true)}
             showThumbnails={isLocalFile && hoverPreview}
           />
         )}
@@ -2180,6 +2189,19 @@ export default function App() {
         onClose={() => setRecentPanelOpen(false)}
       />
 
+
+      <LibraryModal
+        open={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        onPlayFile={(path) => {
+          setLibraryOpen(false);
+          void loadPath(path);
+        }}
+        onPlayTorrent={(magnet) => {
+          setLibraryOpen(false);
+          void handleOpenSource(magnet, false);
+        }}
+      />
 
       {/* Jump to time dialog */}
       <JumpToTimeDialog

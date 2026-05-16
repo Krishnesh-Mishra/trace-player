@@ -142,6 +142,7 @@ interface ControlBarProps {
   onSourceLocal: () => void;
   onSourceNetwork: () => void;
   onSourceRecent: () => void;
+  onLibraryOpen: () => void;
   showThumbnails?: boolean;
 }
 
@@ -224,6 +225,7 @@ export default function ControlBar(props: ControlBarProps) {
     onSourceLocal,
     onSourceNetwork,
     onSourceRecent,
+    onLibraryOpen,
     showThumbnails = true,
   } = props;
 
@@ -502,6 +504,7 @@ export default function ControlBar(props: ControlBarProps) {
           onSourceLocal={onSourceLocal}
           onSourceNetwork={onSourceNetwork}
           onSourceRecent={onSourceRecent}
+          onLibraryOpen={onLibraryOpen}
         />
       </div>
     </>
