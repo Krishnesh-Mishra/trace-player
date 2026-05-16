@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Globe, FolderOpen, Clock } from "lucide-react";
+import { Globe, FolderOpen, Clock, Library } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { Store } from "@tauri-apps/plugin-store";
 import { BackHeader, pageVariants, pageTransition } from "./shared";
@@ -10,6 +10,7 @@ interface Props {
   onLocal: () => void;
   onNetwork: () => void;
   onRecent: () => void;
+  onLibrary: () => void;
   onBack: () => void;
 }
 
@@ -25,11 +26,17 @@ const CACHE_PRESETS: { label: string; bytes: number }[] = [
 ];
 
 const ENTRIES: {
-  id: "local" | "network" | "recent";
+  id: "local" | "network" | "recent" | "library";
   icon: React.ReactNode;
   label: string;
   desc: string;
 }[] = [
+  {
+    id: "library",
+    icon: <Library className="w-4 h-4 text-white/70" />,
+    label: "Library",
+    desc: "Browse your saved videos and torrents (B)",
+  },
   {
     id: "local",
     icon: <FolderOpen className="w-4 h-4 text-white/70" />,
@@ -55,12 +62,14 @@ export default function VideoSourcePage({
   onLocal,
   onNetwork,
   onRecent,
+  onLibrary,
   onBack,
 }: Props) {
-  const handlers: Record<"local" | "network" | "recent", () => void> = {
+  const handlers: Record<"local" | "network" | "recent" | "library", () => void> = {
     local: onLocal,
     network: onNetwork,
     recent: onRecent,
+    library: onLibrary,
   };
 
   const [cacheLimit, setCacheLimit] = useState(0);

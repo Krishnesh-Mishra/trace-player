@@ -1,7 +1,6 @@
 {
   "permissions": {
-    "allow": [
-      "Bash(npm install *)",
+    "allow": [ 
       "Bash(cargo fetch *)",
       "Bash(rustup toolchain *)",
       "Bash(cargo check *)",

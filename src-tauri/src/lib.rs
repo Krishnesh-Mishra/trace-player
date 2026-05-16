@@ -2,6 +2,7 @@ mod agc;
 mod archive;
 mod commands;
 mod events;
+mod library;
 mod log;
 mod perf;
 mod player;
@@ -231,6 +232,19 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(
+            tauri_plugin_sql::Builder::default()
+                .add_migrations(
+                    "sqlite:library.db",
+                    vec![tauri_plugin_sql::Migration {
+                        version: 1,
+                        description: "create library tables",
+                        sql: include_str!("../migrations/001_library.sql"),
+                        kind: tauri_plugin_sql::MigrationKind::Up,
+                    }],
+                )
+                .build(),
+        )
         .manage(app_state)
         .setup(move |app| {
             let window = app
@@ -416,6 +430,9 @@ pub fn run() {
             commands::set_stream_cache,
             commands::open_archive,
             commands::set_torrent_cache_limit,
+            library::generate_library_thumb,
+            library::get_app_thumb_dir,
+            library::read_directory_videos,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
