@@ -54,10 +54,10 @@ impl PerfProfile {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedPerf {
-    pub effective: String,    // what we actually applied
-    pub upscaling: String,    // off | low | medium
+    pub effective: String,     // what we actually applied
+    pub upscaling: String,     // off | low | medium
     pub interpolation: String, // off | smooth | cinematic
-    pub hdr_mode: String,     // auto | passthrough | tone_map | sdr
+    pub hdr_mode: String,      // auto | passthrough | tone_map | sdr
     pub vsync: bool,
 }
 
@@ -194,11 +194,7 @@ pub fn apply_upscaling(
                     if chroma.exists() {
                         chain.push(';');
                         chain.push_str(&chroma.to_string_lossy());
-                        crate::np_info!(
-                            "upscaling",
-                            "loaded {} + KrigBilateral.glsl",
-                            shader_name
-                        );
+                        crate::np_info!("upscaling", "loaded {} + KrigBilateral.glsl", shader_name);
                     } else {
                         crate::np_warn!(
                             "upscaling",
@@ -206,12 +202,7 @@ pub fn apply_upscaling(
                             shader_name
                         );
                     }
-                    let _ = player.command(&[
-                        "change-list",
-                        "glsl-shaders",
-                        "set",
-                        &chain,
-                    ]);
+                    let _ = player.command(&["change-list", "glsl-shaders", "set", &chain]);
                 } else {
                     let _ = player.command(&["change-list", "glsl-shaders", "clr", ""]);
                     crate::np_warn!(
@@ -222,10 +213,7 @@ pub fn apply_upscaling(
                     );
                 }
             } else {
-                crate::np_warn!(
-                    "upscaling",
-                    "shader_dir not set — falling back to Low"
-                );
+                crate::np_warn!("upscaling", "shader_dir not set — falling back to Low");
             }
         }
         _ => return Err(format!("unknown upscaling profile: {profile}")),

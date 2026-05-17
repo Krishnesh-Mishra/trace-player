@@ -164,7 +164,7 @@ export default function AuthRequiredModal({
           onClick={handleCancel}
         >
           <motion.div
-            className="bg-[#111]/95 backdrop-blur-xl border border-white/10 rounded-2xl
+            className="bg-[#111]/95 backdrop-blur-xl  rounded-2xl
                        shadow-2xl p-5 w-[460px] max-w-[92vw] flex flex-col gap-4"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}
@@ -256,7 +256,7 @@ export default function AuthRequiredModal({
                 </button>
                 {showLog && (
                   <pre
-                    className="text-[10px] text-white/55 bg-black/40 border border-white/5
+                    className="text-[10px] text-white/55 bg-black/40 
                                  rounded-md p-2 leading-snug whitespace-pre-wrap break-words"
                   >
                     {summary}

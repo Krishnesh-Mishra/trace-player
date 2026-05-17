@@ -103,10 +103,7 @@ mod ffi {
             format: c_int,
             data: *mut c_void,
         ) -> c_int;
-        pub fn mpv_get_property_string(
-            ctx: *mut mpv_handle,
-            name: *const c_char,
-        ) -> *mut c_char;
+        pub fn mpv_get_property_string(ctx: *mut mpv_handle, name: *const c_char) -> *mut c_char;
         // Preferred way to write any property from a string. Internally goes
         // through mpv's option-string parser, which is more permissive than
         // mpv_set_property + MPV_FORMAT_STRING for object-list properties
@@ -124,10 +121,7 @@ mod ffi {
             name: *const c_char,
             format: c_int,
         ) -> c_int;
-        pub fn mpv_request_log_messages(
-            ctx: *mut mpv_handle,
-            min_level: *const c_char,
-        ) -> c_int;
+        pub fn mpv_request_log_messages(ctx: *mut mpv_handle, min_level: *const c_char) -> c_int;
         pub fn mpv_wait_event(ctx: *mut mpv_handle, timeout: c_double) -> *mut mpv_event;
         pub fn mpv_command(ctx: *mut mpv_handle, args: *const *const c_char) -> c_int;
         pub fn mpv_error_string(error: c_int) -> *const c_char;
@@ -159,16 +153,23 @@ impl Drop for Player {
 /// Owned, copied-out form of mpv_event. The raw mpv_event* lifetime ends at the
 /// next wait_event call, so callers receive an owned snapshot instead.
 pub enum MpvEvent {
-    PropertyChange { tag: u64 },
+    PropertyChange {
+        tag: u64,
+    },
     FileLoaded,
     /// `reason` is one of MPV_END_FILE_REASON_*; `error` is the mpv error
     /// code (negative) when reason==ERROR, otherwise 0.
-    EndFile { reason: i32, error: i32 },
+    EndFile {
+        reason: i32,
+        error: i32,
+    },
     PlaybackRestart,
     /// MPV_EVENT_CLIENT_MESSAGE — `args[0]` is the message name, the rest are
     /// arguments passed by `script-message <name> [args...]` mpv commands.
     /// Used for input forwarding (e.g. MOUSE_MOVE → "ui-wake").
-    ClientMessage { args: Vec<String> },
+    ClientMessage {
+        args: Vec<String>,
+    },
     /// MPV_EVENT_LOG_MESSAGE — internal mpv/libavformat/ffmpeg log line.
     /// Forwarded to our log facility so HTTP/TLS/codec errors are visible
     /// in the dev console instead of just hiding behind `END_FILE error=-13`.
@@ -597,7 +598,10 @@ impl Player {
                 ffi::MPV_EVENT_END_FILE => {
                     let data = (*evt).data as *const ffi::mpv_event_end_file;
                     if data.is_null() {
-                        MpvEvent::EndFile { reason: 0, error: 0 }
+                        MpvEvent::EndFile {
+                            reason: 0,
+                            error: 0,
+                        }
                     } else {
                         MpvEvent::EndFile {
                             reason: (*data).reason,
@@ -654,7 +658,9 @@ impl Player {
     // ── internal helpers ──────────────────────────────────────────────────────
 
     pub fn command(&self, args: &[&str]) -> Result<(), String> {
-        if args.is_empty() { return Err("command: empty args slice".to_string()); }
+        if args.is_empty() {
+            return Err("command: empty args slice".to_string());
+        }
         unsafe {
             let cstrings: Vec<CString> = args.iter().map(|s| cstr(s)).collect();
             let mut ptrs: Vec<*const c_char> = cstrings.iter().map(|s| s.as_ptr()).collect();
@@ -828,4 +834,3 @@ unsafe fn err_str(code: c_int) -> String {
 fn cstr(s: &str) -> CString {
     CString::new(s.replace('\0', "")).expect("null bytes already stripped")
 }
-

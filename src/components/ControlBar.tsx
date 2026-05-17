@@ -7,12 +7,10 @@ import {
   Camera,
   Repeat,
   Repeat1,
-  Repeat2,
   ListVideo,
-  PinIcon,
-  PinOff,
   Info,
   Timer,
+  Library,
 } from "lucide-react";
 
 import Timeline from "./controls/Timeline";
@@ -345,32 +343,6 @@ export default function ControlBar(props: ControlBarProps) {
           </motion.button>
 
           <motion.button
-            className={`${btnSize} flex items-center justify-center rounded-lg
-                       hover:bg-white/10 cursor-pointer transition-colors duration-100`}
-            style={{
-              color: abLoopActive ? "var(--np-accent)" : "rgba(255,255,255,0.6)",
-            }}
-            whileHover={{ scale: 1.08 }}
-            whileTap={{ scale: 0.88 }}
-            onClick={onAbLoopCycle}
-            title="A-B loop ([ or ])"
-          >
-            <Repeat2 className={iconSize} />
-          </motion.button>
-
-          <motion.button
-            className={`${btnSize} flex items-center justify-center rounded-lg
-                       hover:bg-white/10 cursor-pointer transition-colors duration-100`}
-            style={{ color: alwaysOnTop ? "var(--np-accent)" : "rgba(255,255,255,0.6)" }}
-            whileHover={{ scale: 1.08 }}
-            whileTap={{ scale: 0.88 }}
-            onClick={onAlwaysOnTopToggle}
-            title={alwaysOnTop ? "Always on top — click to disable" : "Always on top"}
-          >
-            {alwaysOnTop ? <PinIcon className={iconSize} /> : <PinOff className={iconSize} />}
-          </motion.button>
-
-          <motion.button
             className={`${btnSize} flex items-center justify-center text-white/60
                        hover:text-white rounded-lg hover:bg-white/10 cursor-pointer
                        transition-colors duration-100`}
@@ -408,6 +380,18 @@ export default function ControlBar(props: ControlBarProps) {
       />
 
       <div className="w-px h-4 bg-white/10 mx-1" />
+
+      <motion.button
+        className={`${btnSize} flex items-center justify-center text-white/60
+                   hover:text-white rounded-lg hover:bg-white/10 cursor-pointer
+                   transition-colors duration-100`}
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.88 }}
+        onClick={onLibraryOpen}
+        title="Library"
+      >
+        <Library className={iconSize} />
+      </motion.button>
 
       <motion.button
         className={`${btnSize} flex items-center justify-center text-white/60

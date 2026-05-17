@@ -41,7 +41,7 @@ export default function StyleControls({ style, onChange }: Props) {
           value={style.font}
           onChange={(e) => update({ font: e.target.value })}
           className="w-full px-2.5 py-1.5 text-[12px] text-white/90
-                     bg-white/[0.05] border border-white/10 rounded-md cursor-pointer
+                     bg-white/[0.05]  rounded-md cursor-pointer
                      outline-none focus:border-white/25"
         >
           {FONTS.map((f) => (

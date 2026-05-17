@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Database from "@tauri-apps/plugin-sql";
+import { invoke } from "@tauri-apps/api/core";
 import type {
   LibraryTab,
   LibraryItem,
   FolderEntry,
   BreadcrumbEntry,
   PinnedEntry,
+  TorrentVideoInfo,
 } from "./types";
 
 let dbPromise: Promise<Awaited<ReturnType<typeof Database.load>>> | null = null;
@@ -28,6 +30,7 @@ export function useLibrary(open: boolean) {
   const [pinned, setPinned] = useState<PinnedEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [folderPreviews, setFolderPreviews] = useState<Record<number, string[]>>({});
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -89,6 +92,20 @@ export function useLibrary(open: boolean) {
         setFolders(folderRows);
         setItems(itemRows);
       }
+
+      if (folderRows.length > 0) {
+        const previews: Record<number, string[]> = {};
+        for (const f of folderRows) {
+          const thumbRows = await db.select<{ thumb_path: string }[]>(
+            "SELECT thumb_path FROM items WHERE folder_id = $1 AND thumb_path IS NOT NULL LIMIT 4",
+            [f.id],
+          );
+          if (thumbRows.length > 0) {
+            previews[f.id] = thumbRows.map((r) => r.thumb_path);
+          }
+        }
+        if (mountedRef.current) setFolderPreviews(previews);
+      }
     } catch (e) {
       console.error("library fetch:", e);
     } finally {
@@ -141,6 +158,28 @@ export function useLibrary(open: boolean) {
     }
   }, [open, fetchContents, fetchBreadcrumb, fetchPinned]);
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const db = await getDb();
+        const rows = await db.select<{ id: number; path: string }[]>(
+          "SELECT id, path FROM items WHERE thumb_path IS NULL AND path IS NOT NULL",
+        );
+        for (const row of rows) {
+          if (cancelled) break;
+          try {
+            const thumbPath = await invoke<string>("generate_library_thumb", { path: row.path });
+            await db.execute("UPDATE items SET thumb_path = $1 WHERE id = $2", [thumbPath, row.id]);
+          } catch {}
+        }
+        if (!cancelled) void fetchContents();
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [open, fetchContents]);
+
   const navigateToFolder = useCallback((id: number | null) => {
     setFolderId(id);
     setSearchQuery("");
@@ -150,11 +189,20 @@ export function useLibrary(open: boolean) {
     async (path: string, title: string) => {
       try {
         const db = await getDb();
-        await db.execute(
+        const res = await db.execute(
           "INSERT INTO items (tab, title, path, folder_id) VALUES ('local', $1, $2, $3)",
           [title, path, folderId],
         );
         void fetchContents();
+        const newId = res.lastInsertId;
+        if (newId) {
+          invoke<string>("generate_library_thumb", { path })
+            .then((thumbPath) => {
+              void db.execute("UPDATE items SET thumb_path = $1 WHERE id = $2", [thumbPath, newId]);
+              void fetchContents();
+            })
+            .catch(() => {});
+        }
       } catch (e) {
         console.error("addLocal:", e);
       }
@@ -173,6 +221,36 @@ export function useLibrary(open: boolean) {
         void fetchContents();
       } catch (e) {
         console.error("addTorrent:", e);
+      }
+    },
+    [folderId, fetchContents],
+  );
+
+  const addTorrentAsFolder = useCallback(
+    async (magnetUri: string, torrentName: string, videos: TorrentVideoInfo[]) => {
+      try {
+        const db = await getDb();
+        if (videos.length === 1) {
+          await db.execute(
+            "INSERT INTO items (tab, title, magnet_uri, folder_id, file_index, file_size) VALUES ('torrents', $1, $2, $3, $4, $5)",
+            [videos[0].name, magnetUri, folderId, videos[0].idx, videos[0].length],
+          );
+        } else {
+          const result = await db.execute(
+            "INSERT INTO folders (name, parent_id, tab) VALUES ($1, $2, 'torrents')",
+            [torrentName, folderId],
+          );
+          const newFolderId = result.lastInsertId;
+          for (const v of videos) {
+            await db.execute(
+              "INSERT INTO items (tab, title, magnet_uri, folder_id, file_index, file_size) VALUES ('torrents', $1, $2, $3, $4, $5)",
+              [v.name, magnetUri, newFolderId, v.idx, v.length],
+            );
+          }
+        }
+        void fetchContents();
+      } catch (e) {
+        console.error("addTorrentAsFolder:", e);
       }
     },
     [folderId, fetchContents],
@@ -209,10 +287,28 @@ export function useLibrary(open: boolean) {
   );
 
   const deleteFolder = useCallback(
-    async (id: number) => {
+    async (id: number, mode: "deleteAll" | "moveToParent") => {
       try {
         const db = await getDb();
-        await db.execute("DELETE FROM folders WHERE id = $1", [id]);
+        if (mode === "deleteAll") {
+          await db.execute("DELETE FROM items WHERE folder_id = $1", [id]);
+          await db.execute("DELETE FROM folders WHERE id = $1", [id]);
+        } else {
+          const rows = await db.select<{ parent_id: number | null }[]>(
+            "SELECT parent_id FROM folders WHERE id = $1",
+            [id],
+          );
+          const parentId = rows[0]?.parent_id ?? null;
+          await db.execute(
+            "UPDATE items SET folder_id = $1 WHERE folder_id = $2",
+            [parentId, id],
+          );
+          await db.execute(
+            "UPDATE folders SET parent_id = $1 WHERE parent_id = $2",
+            [parentId, id],
+          );
+          await db.execute("DELETE FROM folders WHERE id = $1", [id]);
+        }
         void fetchContents();
       } catch (e) {
         console.error("deleteFolder:", e);
@@ -232,6 +328,91 @@ export function useLibrary(open: boolean) {
         void fetchContents();
       } catch (e) {
         console.error("renameFolder:", e);
+      }
+    },
+    [fetchContents],
+  );
+
+  const renameItem = useCallback(
+    async (id: number, title: string) => {
+      try {
+        const db = await getDb();
+        await db.execute("UPDATE items SET title = $1 WHERE id = $2", [title, id]);
+        void fetchContents();
+      } catch (e) {
+        console.error("renameItem:", e);
+      }
+    },
+    [fetchContents],
+  );
+
+  const moveItem = useCallback(
+    async (id: number, targetFolderId: number | null) => {
+      try {
+        const db = await getDb();
+        await db.execute("UPDATE items SET folder_id = $1 WHERE id = $2", [targetFolderId, id]);
+        void fetchContents();
+      } catch (e) {
+        console.error("moveItem:", e);
+      }
+    },
+    [fetchContents],
+  );
+
+  const moveFolder = useCallback(
+    async (id: number, targetParentId: number | null) => {
+      try {
+        const db = await getDb();
+        await db.execute("UPDATE folders SET parent_id = $1 WHERE id = $2", [targetParentId, id]);
+        void fetchContents();
+      } catch (e) {
+        console.error("moveFolder:", e);
+      }
+    },
+    [fetchContents],
+  );
+
+  const copyItem = useCallback(
+    async (id: number, targetFolderId: number | null) => {
+      try {
+        const db = await getDb();
+        const rows = await db.select<LibraryItem[]>("SELECT * FROM items WHERE id = $1", [id]);
+        if (rows.length === 0) return;
+        const src = rows[0];
+        await db.execute(
+          "INSERT INTO items (tab, title, path, magnet_uri, folder_id, file_index, file_size) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+          [src.tab, src.title, src.path, src.magnet_uri, targetFolderId, src.file_index, src.file_size],
+        );
+        void fetchContents();
+      } catch (e) {
+        console.error("copyItem:", e);
+      }
+    },
+    [fetchContents],
+  );
+
+  const copyFolder = useCallback(
+    async (id: number, targetParentId: number | null) => {
+      try {
+        const db = await getDb();
+        const folderRows = await db.select<FolderEntry[]>("SELECT * FROM folders WHERE id = $1", [id]);
+        if (folderRows.length === 0) return;
+        const src = folderRows[0];
+        const result = await db.execute(
+          "INSERT INTO folders (name, parent_id, tab) VALUES ($1, $2, $3)",
+          [src.name + " (copy)", targetParentId, src.tab],
+        );
+        const newId = result.lastInsertId;
+        const childItems = await db.select<LibraryItem[]>("SELECT * FROM items WHERE folder_id = $1", [id]);
+        for (const item of childItems) {
+          await db.execute(
+            "INSERT INTO items (tab, title, path, magnet_uri, folder_id, file_index, file_size) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            [item.tab, item.title, item.path, item.magnet_uri, newId, item.file_index, item.file_size],
+          );
+        }
+        void fetchContents();
+      } catch (e) {
+        console.error("copyFolder:", e);
       }
     },
     [fetchContents],
@@ -323,15 +504,22 @@ export function useLibrary(open: boolean) {
     loading,
     addLocalItem,
     addTorrentItem,
+    addTorrentAsFolder,
     deleteItem,
     createFolder,
     deleteFolder,
     renameFolder,
+    renameItem,
+    moveItem,
+    moveFolder,
+    copyItem,
+    copyFolder,
     pinItem,
     unpinItem,
     updateItemThumb,
     markPlayed,
     getRecentItems,
+    folderPreviews,
     refresh: fetchContents,
   };
 }

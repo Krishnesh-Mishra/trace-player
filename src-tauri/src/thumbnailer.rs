@@ -49,8 +49,8 @@ const CACHE_TTL_DAYS: u64 = 30;
 #[derive(Serialize, Clone)]
 pub struct ThumbnailReady {
     pub b64: String,
-    pub count: u32,       // total tiles the sprite is sized for
-    pub filled: u32,      // number of tiles actually rendered so far
+    pub count: u32,  // total tiles the sprite is sized for
+    pub filled: u32, // number of tiles actually rendered so far
     pub cols: u32,
     pub rows: u32,
     pub tile_width: u32,
@@ -144,7 +144,8 @@ pub fn start_thumbnail_job(app: AppHandle, thumb: Arc<Player>, path: String) {
                     crate::np_info!(
                         "thumb",
                         "legacy cache HIT key={} count={} (no new caches written)",
-                        key, meta.count
+                        key,
+                        meta.count
                     );
                     let b64 = general_purpose::STANDARD.encode(&bytes);
                     let _ = app.emit(
@@ -196,7 +197,9 @@ pub fn request_dense_window(
     crate::np_debug!(
         "thumb",
         "dense window request t={:.3} radius={:.1} density={}",
-        t_center, radius, density
+        t_center,
+        radius,
+        density
     );
 
     // Swap in our cancel token; flip the previous one so its job exits.
@@ -226,8 +229,7 @@ pub fn request_dense_window(
             }
         }
         let _ = fs::create_dir_all(&tmp_root);
-        let tid = format!("{:?}", std::thread::current().id())
-            .replace(['(', ')', ' ', '\"'], "");
+        let tid = format!("{:?}", std::thread::current().id()).replace(['(', ')', ' ', '\"'], "");
         let seq = THUMB_COUNTER.fetch_add(1, Ordering::Relaxed);
         let tmp_tile = tmp_root.join(format!(
             "tile-{}-{}-{}-dense.jpg",
@@ -288,7 +290,10 @@ pub fn request_dense_window(
         crate::np_info!(
             "thumb",
             "dense window done: emitted={} skipped={} cancelled={} elapsed={}ms",
-            emitted, skipped, cancelled, started.elapsed().as_millis()
+            emitted,
+            skipped,
+            cancelled,
+            started.elapsed().as_millis()
         );
 
         // If our token is still installed, clear the slot.
@@ -339,8 +344,7 @@ pub fn request_exact_frame(app: AppHandle, thumb: Arc<Player>, t: f64) {
             }
         }
         let _ = fs::create_dir_all(&tmp_root);
-        let tid = format!("{:?}", std::thread::current().id())
-            .replace(['(', ')', ' ', '\"'], "");
+        let tid = format!("{:?}", std::thread::current().id()).replace(['(', ')', ' ', '\"'], "");
         let seq = THUMB_COUNTER.fetch_add(1, Ordering::Relaxed);
         let tmp_tile = tmp_root.join(format!(
             "tile-{}-{}-{}-exact.jpg",
@@ -377,7 +381,8 @@ pub fn request_exact_frame(app: AppHandle, thumb: Arc<Player>, t: f64) {
                         crate::np_info!(
                             "thumb",
                             "exact frame delivered t={:.3} elapsed={}ms",
-                            t_clamped, started.elapsed().as_millis()
+                            t_clamped,
+                            started.elapsed().as_millis()
                         );
                     }
                 }
@@ -446,7 +451,9 @@ fn wait_for_load(thumb: &Player) -> Result<(), String> {
         }
         match thumb.wait_event(0.5) {
             MpvEvent::FileLoaded => return Ok(()),
-            MpvEvent::EndFile { .. } => return Err("thumbnailer end-of-file before load".to_string()),
+            MpvEvent::EndFile { .. } => {
+                return Err("thumbnailer end-of-file before load".to_string())
+            }
             MpvEvent::Shutdown => return Err("thumbnailer shut down".to_string()),
             _ => continue,
         }
@@ -491,7 +498,8 @@ pub fn generate_persistent_thumb(
         return Err("no duration".to_string());
     }
 
-    let seek_to = (duration * 0.1).min(5.0).max(0.0);
+    let seek_to = 10.0_f64.min(duration * 0.5);
+    crate::np_info!("thumb", "seeking to {:.1}s (duration={:.1}s)", seek_to, duration);
     let t_str = format!("{:.3}", seek_to);
     thumb
         .command_silent(&["seek", &t_str, "absolute"])
@@ -523,6 +531,60 @@ pub fn generate_persistent_thumb(
     let _ = fs::remove_file(&tmp_file);
 
     Ok(())
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaInfo {
+    pub width: i64,
+    pub height: i64,
+    pub video_count: usize,
+    pub audio_count: usize,
+    pub subtitle_count: usize,
+}
+
+pub fn probe_media_info(thumb: &Player, source_path: &str) -> Result<MediaInfo, String> {
+    let _g = worker_lock()
+        .lock()
+        .map_err(|e| format!("worker lock: {e}"))?;
+
+    thumb.load(source_path).map_err(|e| format!("load: {e}"))?;
+    wait_for_load(thumb)?;
+
+    let width = thumb.get_int_prop("video-params/w").unwrap_or(0);
+    let height = thumb.get_int_prop("video-params/h").unwrap_or(0);
+
+    let track_json = thumb
+        .get_property_string("track-list")
+        .unwrap_or_else(|| "[]".to_string());
+
+    let (mut video_count, mut audio_count, mut subtitle_count) = (0usize, 0, 0);
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&track_json) {
+        if let Some(arr) = parsed.as_array() {
+            for entry in arr {
+                match entry.get("type").and_then(|v| v.as_str()) {
+                    Some("video") => video_count += 1,
+                    Some("audio") => audio_count += 1,
+                    Some("sub") => subtitle_count += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    crate::np_info!(
+        "probe",
+        "{}x{}, {} video, {} audio, {} sub",
+        width, height, video_count, audio_count, subtitle_count
+    );
+
+    Ok(MediaInfo {
+        width,
+        height,
+        video_count,
+        audio_count,
+        subtitle_count,
+    })
 }
 
 fn load_and_normalize(path: &PathBuf) -> Option<RgbImage> {

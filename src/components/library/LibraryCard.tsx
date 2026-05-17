@@ -1,15 +1,16 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { motion } from "framer-motion";
-import { Play, Trash2, Film } from "lucide-react";
+import { Play, Trash2 as _Trash2, Film } from "lucide-react";
 import type { LibraryItem } from "./types";
 
 interface Props {
   item: LibraryItem;
   onPlay: () => void;
   onDelete: () => void;
-  onThumbGenerated?: (id: number, thumbPath: string) => void;
+  renaming?: boolean;
+  onRenameSubmit?: (name: string) => void;
+  onRenameCancel?: () => void;
 }
 
 function fmtDuration(secs: number | null): string {
@@ -32,37 +33,19 @@ function fmtSize(bytes: number | null): string {
 export default function LibraryCard({
   item,
   onPlay,
-  onDelete,
-  onThumbGenerated,
+  onDelete: _onDelete,
+  renaming,
+  onRenameSubmit,
+  onRenameCancel,
 }: Props) {
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
-  const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
-    if (item.thumb_path) {
-      setThumbUrl(convertFileSrc(item.thumb_path));
-      return;
-    }
-    const source = item.path || item.magnet_uri;
-    if (!source || item.tab === "torrents" || generating) return;
-
-    let cancelled = false;
-    setGenerating(true);
-    invoke<string>("generate_library_thumb", { path: source })
-      .then((path) => {
-        if (!cancelled) {
-          setThumbUrl(convertFileSrc(path));
-          onThumbGenerated?.(item.id, path);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setGenerating(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [item.thumb_path, item.path, item.magnet_uri, item.tab, item.id, generating, onThumbGenerated]);
+    if (!item.thumb_path) return;
+    invoke<string>("read_thumb_base64", { path: item.thumb_path })
+      .then((b64) => setThumbUrl(`data:image/jpeg;base64,${b64}`))
+      .catch(() => {});
+  }, [item.thumb_path]);
 
   return (
     <motion.div
@@ -92,7 +75,7 @@ export default function LibraryCard({
           </div>
         </div>
 
-        <button
+        {/* <button
           onClick={(e) => {
             e.stopPropagation();
             onDelete();
@@ -102,7 +85,7 @@ export default function LibraryCard({
                      hover:bg-red-500/80 transition-all duration-100 cursor-pointer"
         >
           <Trash2 className="w-3 h-3 text-white" />
-        </button>
+        </button> */}
 
         {item.duration !== null && item.duration > 0 && (
           <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px]
@@ -113,7 +96,24 @@ export default function LibraryCard({
       </div>
 
       <div className="mt-1.5 px-0.5">
-        <p className="text-xs text-white/80 truncate">{item.title}</p>
+        {renaming ? (
+          <input
+            type="text"
+            defaultValue={item.title}
+            autoFocus
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") onRenameSubmit?.((e.target as HTMLInputElement).value);
+              if (e.key === "Escape") onRenameCancel?.();
+            }}
+            onBlur={(e) => onRenameSubmit?.(e.target.value)}
+            className="w-full bg-white/10 rounded px-1.5 py-0.5
+                       text-xs text-white outline-none"
+          />
+        ) : (
+          <p className="text-xs text-white/80 truncate">{item.title}</p>
+        )}
         {item.file_size !== null && item.file_size > 0 && (
           <p className="text-[10px] text-white/40 mt-0.5">
             {fmtSize(item.file_size)}

@@ -3,6 +3,7 @@ import {
   Magnet,
   HardDrive,
   Search,
+  Download,
   Clock,
   Pin,
   PinOff,
@@ -24,6 +25,7 @@ const TABS: { key: LibraryTab; label: string; icon: typeof Magnet }[] = [
   { key: "torrents", label: "Torrents", icon: Magnet },
   { key: "local", label: "Local", icon: HardDrive },
   { key: "explore", label: "Explore", icon: Search },
+  { key: "downloads", label: "Downloads", icon: Download },
 ];
 
 export default function LibrarySidebar({
@@ -43,7 +45,7 @@ export default function LibrarySidebar({
   }, [getRecentItems]);
 
   return (
-    <div className="w-56 h-full border-r border-white/8 bg-[#0a0a0a] flex flex-col shrink-0">
+    <div className="w-56 h-full bg-[#0a0a0a] flex flex-col shrink-0">
       <div className="px-3 pt-4 pb-2">
         <h2 className="text-[10px] font-semibold text-white/30 uppercase tracking-wider mb-2">
           Library
@@ -67,29 +69,8 @@ export default function LibrarySidebar({
         </div>
       </div>
 
-      {recents.length > 0 && (
-        <div className="px-3 pt-3">
-          <h3 className="text-[10px] font-semibold text-white/30 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-            <Clock className="w-3 h-3" /> Recent
-          </h3>
-          <div className="space-y-0.5">
-            {recents.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => onRecentClick(item)}
-                className="w-full text-left text-[11px] text-white/50 hover:text-white/80
-                           px-2.5 py-1.5 rounded-md hover:bg-white/5 cursor-pointer
-                           truncate transition-colors duration-100"
-              >
-                {item.title}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {pinned.length > 0 && (
-        <div className="px-3 pt-3 flex-1 overflow-y-auto">
+        <div className="px-3 pt-3">
           <h3 className="text-[10px] font-semibold text-white/30 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
             <Pin className="w-3 h-3" /> Pinned
           </h3>
@@ -123,6 +104,28 @@ export default function LibrarySidebar({
           </div>
         </div>
       )}
+
+      {recents.length > 0 && (
+        <div className="px-3 pt-3 flex-1 overflow-y-auto">
+          <h3 className="text-[10px] font-semibold text-white/30 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+            <Clock className="w-3 h-3" /> Recent
+          </h3>
+          <div className="space-y-0.5">
+            {recents.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => onRecentClick(item)}
+                className="w-full text-left text-[11px] text-white/50 hover:text-white/80
+                           px-2.5 py-1.5 rounded-md hover:bg-white/5 cursor-pointer
+                           truncate transition-colors duration-100"
+              >
+                {item.title}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

@@ -33,7 +33,9 @@ const SILENCE_DBFS: f64 = -85.0;
 
 pub fn start_agc_loop(player: Arc<Player>, agc: Arc<AgcController>) {
     thread::spawn(move || loop {
-        if agc.shutdown.load(Ordering::Relaxed) { break; }
+        if agc.shutdown.load(Ordering::Relaxed) {
+            break;
+        }
         if !agc.enabled.load(Ordering::Relaxed) {
             thread::sleep(IDLE_TICK);
             continue;
@@ -60,12 +62,11 @@ pub fn start_agc_loop(player: Arc<Player>, agc: Arc<AgcController>) {
         }
         thread::sleep(TICK);
 
-        let rms = match player.get_property_f64(
-            "af-metadata/agcstats/lavfi.astats.Overall.RMS_level",
-        ) {
-            Some(v) => v,
-            None => continue,
-        };
+        let rms =
+            match player.get_property_f64("af-metadata/agcstats/lavfi.astats.Overall.RMS_level") {
+                Some(v) => v,
+                None => continue,
+            };
 
         if !rms.is_finite() || rms < SILENCE_DBFS {
             continue;

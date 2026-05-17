@@ -69,7 +69,7 @@ export default function MediaInfoDialog({ open, onClose }: Props) {
           onClick={onClose}
         >
           <motion.div
-            className="bg-[#111]/92 backdrop-blur-xl border border-white/10 rounded-2xl
+            className="bg-[#111]/92 backdrop-blur-xl  rounded-2xl
                        shadow-2xl w-80 max-h-[70vh] flex flex-col overflow-hidden"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}

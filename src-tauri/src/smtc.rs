@@ -59,11 +59,9 @@ unsafe impl Sync for SmtcController {}
 impl SmtcController {
     pub fn new(hwnd_raw: isize, tx: Sender<SmtcCommand>) -> Result<Self, String> {
         // 1. Get the SMTC activation factory as IInspectable.
-        let factory: IInspectable = windows::core::factory::<
-            SystemMediaTransportControls,
-            IInspectable,
-        >()
-        .map_err(|e| format!("smtc factory: {e}"))?;
+        let factory: IInspectable =
+            windows::core::factory::<SystemMediaTransportControls, IInspectable>()
+                .map_err(|e| format!("smtc factory: {e}"))?;
 
         // 2. QI for ISystemMediaTransportControlsInterop. Returns a raw vtable
         //    pointer; we walk slot 6 (IUnknown 0..2, IInspectable 3..5,
@@ -172,7 +170,9 @@ impl SmtcController {
         if duration_s <= 0.0 {
             return;
         }
-        let ticks = |s: f64| TimeSpan { Duration: (s * 1e7) as i64 };
+        let ticks = |s: f64| TimeSpan {
+            Duration: (s * 1e7) as i64,
+        };
         let _ = self.timeline.SetStartTime(ticks(0.0));
         let _ = self.timeline.SetEndTime(ticks(duration_s));
         let _ = self.timeline.SetPosition(ticks(position_s));
@@ -185,9 +185,7 @@ impl SmtcController {
     pub fn clear(&self) {
         let _ = self.updater.ClearAll();
         let _ = self.updater.Update();
-        let _ = self
-            .controls
-            .SetPlaybackStatus(MediaPlaybackStatus::Closed);
+        let _ = self.controls.SetPlaybackStatus(MediaPlaybackStatus::Closed);
     }
 }
 

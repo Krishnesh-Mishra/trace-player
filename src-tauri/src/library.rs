@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use sha1::{Digest, Sha1};
@@ -71,8 +71,7 @@ pub async fn generate_library_thumb(
     let dest_clone = dest.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let result =
-            thumbnailer::generate_persistent_thumb(&thumbnailer, &src, &dest_clone);
+        let result = thumbnailer::generate_persistent_thumb(&thumbnailer, &src, &dest_clone);
         let _ = tx.send(result);
     });
     rx.recv()
@@ -82,6 +81,60 @@ pub async fn generate_library_thumb(
     dest.to_str()
         .map(|s| s.to_string())
         .ok_or_else(|| "non-utf8 path".to_string())
+}
+
+#[tauri::command]
+pub fn read_thumb_base64(path: String) -> Result<String, String> {
+    use base64::{engine::general_purpose, Engine as _};
+    let bytes = std::fs::read(&path).map_err(|e| format!("read thumb: {e}"))?;
+    Ok(general_purpose::STANDARD.encode(&bytes))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileMetaInfo {
+    pub size: u64,
+    pub created: Option<u64>,
+    pub modified: Option<u64>,
+}
+
+#[tauri::command]
+pub fn get_file_metadata(path: String) -> Result<FileMetaInfo, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| format!("metadata: {e}"))?;
+    let created = meta
+        .created()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    Ok(FileMetaInfo {
+        size: meta.len(),
+        created,
+        modified,
+    })
+}
+
+#[tauri::command]
+pub async fn probe_video_info(
+    path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<thumbnailer::MediaInfo, String> {
+    let thumbnailer = state
+        .thumbnailer
+        .clone()
+        .ok_or_else(|| "thumbnailer not available".to_string())?;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = thumbnailer::probe_media_info(&thumbnailer, &path);
+        let _ = tx.send(result);
+    });
+    rx.recv()
+        .map_err(|e| format!("probe thread: {e}"))?
 }
 
 #[tauri::command]
@@ -125,4 +178,64 @@ pub async fn read_directory_videos(path: String) -> Result<Vec<DirVideo>, String
 
     results.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(results)
+}
+
+#[tauri::command]
+pub async fn scan_common_folders() -> Result<Vec<DirVideo>, String> {
+    let folders: Vec<PathBuf> = [
+        dirs::video_dir(),
+        dirs::download_dir(),
+        dirs::desktop_dir(),
+        dirs::document_dir(),
+        dirs::picture_dir(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let mut results = Vec::new();
+    for folder in &folders {
+        scan_recursive(folder, 3, &mut results);
+    }
+    results.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(results)
+}
+
+fn scan_recursive(dir: &Path, max_depth: u32, results: &mut Vec<DirVideo>) {
+    if max_depth == 0 {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            scan_recursive(&p, max_depth - 1, results);
+        } else if p.is_file() {
+            let ext = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_ascii_lowercase());
+            if let Some(ref ext) = ext {
+                if !VIDEO_EXTS.contains(&ext.as_str()) {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            results.push(DirVideo {
+                name,
+                path: p.to_string_lossy().to_string(),
+                size,
+            });
+        }
+    }
 }

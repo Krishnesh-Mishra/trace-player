@@ -69,7 +69,11 @@ pub fn start_event_loop(
         // -1 = not buffering; 0-100 = percent filled. Hitting 100 means mpv
         // is about to resume; the frontend uses this as the "ready to play"
         // progress bar instead of the misleading total-download percentage.
-        ("cache-buffering-state", MPV_FORMAT_NONE, TAG_CACHE_BUFFERING),
+        (
+            "cache-buffering-state",
+            MPV_FORMAT_NONE,
+            TAG_CACHE_BUFFERING,
+        ),
         // Fires once per rendered frame at the VO. Only change that matters is
         // that a new frame was displayed — we never read the property value,
         // MPV_FORMAT_NONE is enough.
@@ -88,7 +92,11 @@ pub fn start_event_loop(
     if let Err(e) = player.request_log_messages("warn") {
         crate::np_err!("events", "request_log_messages failed: {e}");
     }
-    crate::np_info!("events", "event loop starting, observing {} properties", observers.len());
+    crate::np_info!(
+        "events",
+        "event loop starting, observing {} properties",
+        observers.len()
+    );
 
     thread::spawn(move || {
         // Armed ONLY when paused-for-cache transitions false (cache refilled).
@@ -103,123 +111,144 @@ pub fn start_event_loop(
         let mut frame_dismiss_count: u32 = 0;
         const FRAME_DISMISS_THRESHOLD: u32 = 5;
 
-      loop {
-        match player.wait_event(-1.0) {
-            MpvEvent::PropertyChange { tag } => {
-                if tag == TAG_VIDEO_FRAME {
-                    if pending_frame_dismiss {
-                        frame_dismiss_count += 1;
-                        crate::np_debug!("events", "frame-dismiss count={}/{}", frame_dismiss_count, FRAME_DISMISS_THRESHOLD);
-                        if frame_dismiss_count >= FRAME_DISMISS_THRESHOLD {
-                            pending_frame_dismiss = false;
-                            frame_dismiss_count = 0;
-                            let _ = app.emit("mpv:frame-changed", ());
+        loop {
+            match player.wait_event(-1.0) {
+                MpvEvent::PropertyChange { tag } => {
+                    if tag == TAG_VIDEO_FRAME {
+                        if pending_frame_dismiss {
+                            frame_dismiss_count += 1;
+                            crate::np_debug!(
+                                "events",
+                                "frame-dismiss count={}/{}",
+                                frame_dismiss_count,
+                                FRAME_DISMISS_THRESHOLD
+                            );
+                            if frame_dismiss_count >= FRAME_DISMISS_THRESHOLD {
+                                pending_frame_dismiss = false;
+                                frame_dismiss_count = 0;
+                                let _ = app.emit("mpv:frame-changed", ());
+                            }
                         }
-                    }
-                } else {
-                    handle_property_change(&app, &player, &agc, &ui, tag, &mut pending_frame_dismiss, &mut frame_dismiss_count);
-                }
-            }
-            MpvEvent::FileLoaded => {
-                // Path string is sent so the frontend can kick thumbnailing
-                // for whichever file mpv just loaded — important for
-                // auto-advance from playlist where loadPath isn't called.
-                let path = player
-                    .get_string_prop_pub("path")
-                    .unwrap_or_default();
-                crate::np_info!("events", "FILE_LOADED path={}", path);
-                // mpv's pause observer fires only on VALUE CHANGES. Since mpv
-                // defaults to pause=false, loading a file keeps it false and
-                // the observer never fires. Emit explicitly so the frontend
-                // isPlaying reflects the actual backend state on every file load.
-                if let Some(paused) = player.get_property_flag("pause") {
-                    let _ = app.emit("mpv:pause", paused);
-                }
-                // Lazy-prefetch hook: if the new file is a torrent stream URL,
-                // tell rqbit to widen its "wanted" window. No-op (and clears
-                // the active marker) when the new file isn't a torrent.
-                let st: tauri::State<'_, AppState> = app.state();
-                handle_torrent_advance(st.inner(), &path);
-                // Same idea for archives: if the new path is inside a
-                // registered archive cache, kick the next-entry prefetch
-                // and rotate the active-paths set.
-                handle_archive_advance(st.inner(), &path);
-                if let Err(e) = app.emit("mpv:file-loaded", path) { eprintln!("[events] emit failed: {e}"); }
-                emit_tracks(&app, &player);
-                emit_chapters(&app, &player);
-                emit_hdr_info(&app, &player);
-                emit_playlist(&app, &player);
-            }
-            MpvEvent::EndFile { reason, error } => {
-                crate::np_info!("events", "END_FILE reason={reason} error={error}");
-                let is_error = reason == crate::player::MPV_END_FILE_REASON_ERROR;
-                // Archive recovery: if the failed path is inside a
-                // registered archive cache, that means mpv tried to load an
-                // entry we hadn't extracted yet (manual skip past the
-                // prefetch window). Extract it off-thread and re-issue
-                // loadfile so the user sees a brief stall, then playback —
-                // not a hard error. Skip the auth-classification toast
-                // path in that case.
-                if is_error {
-                    let cur_path = player
-                        .get_string_prop_pub("path")
-                        .unwrap_or_default();
-                    if !cur_path.is_empty() {
-                        let st: tauri::State<'_, AppState> = app.state();
-                        // Torrent stream refused (file not in wanted window)
-                        // → widen window + loadfile-replace. Checked first
-                        // because a torrent URL can't be an archive path.
-                        if try_recover_torrent_load(st.inner(), &app, &cur_path) {
-                            continue;
-                        }
-                        if try_recover_archive_load(st.inner(), &app, &cur_path) {
-                            continue;
-                        }
+                    } else {
+                        handle_property_change(
+                            &app,
+                            &player,
+                            &agc,
+                            &ui,
+                            tag,
+                            &mut pending_frame_dismiss,
+                            &mut frame_dismiss_count,
+                        );
                     }
                 }
-                #[derive(Serialize, Clone)]
-                struct EofPayload {
-                    reason: i32,
-                    error: i32,
-                    is_error: bool,
+                MpvEvent::FileLoaded => {
+                    // Path string is sent so the frontend can kick thumbnailing
+                    // for whichever file mpv just loaded — important for
+                    // auto-advance from playlist where loadPath isn't called.
+                    let path = player.get_string_prop_pub("path").unwrap_or_default();
+                    crate::np_info!("events", "FILE_LOADED path={}", path);
+                    // mpv's pause observer fires only on VALUE CHANGES. Since mpv
+                    // defaults to pause=false, loading a file keeps it false and
+                    // the observer never fires. Emit explicitly so the frontend
+                    // isPlaying reflects the actual backend state on every file load.
+                    if let Some(paused) = player.get_property_flag("pause") {
+                        let _ = app.emit("mpv:pause", paused);
+                    }
+                    // Lazy-prefetch hook: if the new file is a torrent stream URL,
+                    // tell rqbit to widen its "wanted" window. No-op (and clears
+                    // the active marker) when the new file isn't a torrent.
+                    let st: tauri::State<'_, AppState> = app.state();
+                    handle_torrent_advance(st.inner(), &path);
+                    // Same idea for archives: if the new path is inside a
+                    // registered archive cache, kick the next-entry prefetch
+                    // and rotate the active-paths set.
+                    handle_archive_advance(st.inner(), &path);
+                    if let Err(e) = app.emit("mpv:file-loaded", path) {
+                        eprintln!("[events] emit failed: {e}");
+                    }
+                    emit_tracks(&app, &player);
+                    emit_chapters(&app, &player);
+                    emit_hdr_info(&app, &player);
+                    emit_playlist(&app, &player);
                 }
-                if let Err(e) = app.emit(
-                    "mpv:eof",
-                    EofPayload { reason, error, is_error },
-                ) { eprintln!("[events] emit failed: {e}"); }
-            }
-            MpvEvent::ClientMessage { args } => {
-                handle_client_message(&app, &ui, args);
-            }
-            MpvEvent::LogMessage { prefix, level, text } => {
-                // Forward to whichever np_* macro matches mpv's level so the
-                // dev console formatting/severity stays consistent.
-                let tag = if prefix.is_empty() { "mpv" } else { &prefix };
-                match level.as_str() {
-                    "fatal" | "error" => crate::np_err!(tag, "{}", text),
-                    "warn" => crate::np_warn!(tag, "{}", text),
-                    _ => crate::np_info!(tag, "{}", text),
+                MpvEvent::EndFile { reason, error } => {
+                    crate::np_info!("events", "END_FILE reason={reason} error={error}");
+                    let is_error = reason == crate::player::MPV_END_FILE_REASON_ERROR;
+                    // Archive recovery: if the failed path is inside a
+                    // registered archive cache, that means mpv tried to load an
+                    // entry we hadn't extracted yet (manual skip past the
+                    // prefetch window). Extract it off-thread and re-issue
+                    // loadfile so the user sees a brief stall, then playback —
+                    // not a hard error. Skip the auth-classification toast
+                    // path in that case.
+                    if is_error {
+                        let cur_path = player.get_string_prop_pub("path").unwrap_or_default();
+                        if !cur_path.is_empty() {
+                            let st: tauri::State<'_, AppState> = app.state();
+                            // Torrent stream refused (file not in wanted window)
+                            // → widen window + loadfile-replace. Checked first
+                            // because a torrent URL can't be an archive path.
+                            if try_recover_torrent_load(st.inner(), &app, &cur_path) {
+                                continue;
+                            }
+                            if try_recover_archive_load(st.inner(), &app, &cur_path) {
+                                continue;
+                            }
+                        }
+                    }
+                    #[derive(Serialize, Clone)]
+                    struct EofPayload {
+                        reason: i32,
+                        error: i32,
+                        is_error: bool,
+                    }
+                    if let Err(e) = app.emit(
+                        "mpv:eof",
+                        EofPayload {
+                            reason,
+                            error,
+                            is_error,
+                        },
+                    ) {
+                        eprintln!("[events] emit failed: {e}");
+                    }
                 }
+                MpvEvent::ClientMessage { args } => {
+                    handle_client_message(&app, &ui, args);
+                }
+                MpvEvent::LogMessage {
+                    prefix,
+                    level,
+                    text,
+                } => {
+                    // Forward to whichever np_* macro matches mpv's level so the
+                    // dev console formatting/severity stays consistent.
+                    let tag = if prefix.is_empty() { "mpv" } else { &prefix };
+                    match level.as_str() {
+                        "fatal" | "error" => crate::np_err!(tag, "{}", text),
+                        "warn" => crate::np_warn!(tag, "{}", text),
+                        _ => crate::np_info!(tag, "{}", text),
+                    }
+                }
+                MpvEvent::Shutdown => {
+                    crate::np_info!("events", "SHUTDOWN — event loop exiting");
+                    break;
+                }
+                MpvEvent::PlaybackRestart => {
+                    crate::np_debug!("events", "PLAYBACK_RESTART");
+                    // Arm the frame-dismiss and reset the count. Resetting on every
+                    // restart means only N *consecutive* frames after the most recent
+                    // pipeline restart are counted — old partial counts from earlier
+                    // spurious restarts can't bleed into the final check.
+                    // paused-for-cache=true will disarm if buffering starts, so a
+                    // spurious early restart followed by a stall is safe.
+                    pending_frame_dismiss = true;
+                    frame_dismiss_count = 0;
+                    let _ = app.emit("mpv:playback-restart", ());
+                }
+                MpvEvent::Other => {}
             }
-            MpvEvent::Shutdown => {
-                crate::np_info!("events", "SHUTDOWN — event loop exiting");
-                break;
-            }
-            MpvEvent::PlaybackRestart => {
-                crate::np_debug!("events", "PLAYBACK_RESTART");
-                // Arm the frame-dismiss and reset the count. Resetting on every
-                // restart means only N *consecutive* frames after the most recent
-                // pipeline restart are counted — old partial counts from earlier
-                // spurious restarts can't bleed into the final check.
-                // paused-for-cache=true will disarm if buffering starts, so a
-                // spurious early restart followed by a stall is safe.
-                pending_frame_dismiss = true;
-                frame_dismiss_count = 0;
-                let _ = app.emit("mpv:playback-restart", ());
-            }
-            MpvEvent::Other => {}
         }
-      }
     });
 }
 
@@ -244,49 +273,65 @@ fn handle_property_change(
                 return;
             }
             if let Some(v) = player.get_property_f64("time-pos") {
-                if let Err(e) = app.emit("mpv:time-pos", v) { eprintln!("[events] emit failed: {e}"); }
+                if let Err(e) = app.emit("mpv:time-pos", v) {
+                    eprintln!("[events] emit failed: {e}");
+                }
             }
         }
         TAG_DURATION => {
             if let Some(v) = player.get_property_f64("duration") {
                 crate::np_info!("events", "duration={:.3}s", v);
-                if let Err(e) = app.emit("mpv:duration", v) { eprintln!("[events] emit failed: {e}"); }
+                if let Err(e) = app.emit("mpv:duration", v) {
+                    eprintln!("[events] emit failed: {e}");
+                }
             }
         }
         TAG_PAUSE => {
             if let Some(v) = player.get_property_flag("pause") {
                 crate::np_info!("events", "pause={}", v);
-                if let Err(e) = app.emit("mpv:pause", v) { eprintln!("[events] emit failed: {e}"); }
+                if let Err(e) = app.emit("mpv:pause", v) {
+                    eprintln!("[events] emit failed: {e}");
+                }
             }
         }
         TAG_VOLUME => {
             // Suppressed while AGC is active; see notes in agc.rs.
             if !agc.enabled.load(Ordering::Relaxed) {
                 if let Some(v) = player.get_property_f64("volume") {
-                    if let Err(e) = app.emit("mpv:volume", v) { eprintln!("[events] emit failed: {e}"); }
+                    if let Err(e) = app.emit("mpv:volume", v) {
+                        eprintln!("[events] emit failed: {e}");
+                    }
                 }
             }
         }
         TAG_SPEED => {
             if let Some(v) = player.get_property_f64("speed") {
                 crate::np_info!("events", "speed={:.3}x", v);
-                if let Err(e) = app.emit("mpv:speed", v) { eprintln!("[events] emit failed: {e}"); }
+                if let Err(e) = app.emit("mpv:speed", v) {
+                    eprintln!("[events] emit failed: {e}");
+                }
             }
         }
         TAG_SEEKABLE => {
             if let Some(v) = player.get_property_flag("seekable") {
                 crate::np_debug!("events", "seekable={}", v);
-                if let Err(e) = app.emit("mpv:seekable", v) { eprintln!("[events] emit failed: {e}"); }
+                if let Err(e) = app.emit("mpv:seekable", v) {
+                    eprintln!("[events] emit failed: {e}");
+                }
             }
         }
         TAG_CORE_IDLE => {
             if let Some(v) = player.get_property_flag("core-idle") {
-                if let Err(e) = app.emit("mpv:core-idle", v) { eprintln!("[events] emit failed: {e}"); }
+                if let Err(e) = app.emit("mpv:core-idle", v) {
+                    eprintln!("[events] emit failed: {e}");
+                }
             }
         }
         TAG_IDLE_ACTIVE => {
             if let Some(v) = player.get_property_flag("idle-active") {
-                if let Err(e) = app.emit("mpv:idle-active", v) { eprintln!("[events] emit failed: {e}"); }
+                if let Err(e) = app.emit("mpv:idle-active", v) {
+                    eprintln!("[events] emit failed: {e}");
+                }
             }
         }
         TAG_PAUSED_FOR_CACHE => {
@@ -306,14 +351,18 @@ fn handle_property_change(
                     *pending_frame_dismiss = true;
                     *frame_dismiss_count = 0;
                 }
-                if let Err(e) = app.emit("mpv:paused-for-cache", v) { eprintln!("[events] emit failed: {e}"); }
+                if let Err(e) = app.emit("mpv:paused-for-cache", v) {
+                    eprintln!("[events] emit failed: {e}");
+                }
             }
         }
         TAG_CACHE_BUFFERING => {
             // -1 = not buffering, 0-100 = cache fill level while stalled.
             // Value of 100 means the cache is full and playback is resuming.
             if let Some(v) = player.get_int_prop("cache-buffering-state") {
-                if let Err(e) = app.emit("mpv:cache-buffering", v) { eprintln!("[events] emit failed: {e}"); }
+                if let Err(e) = app.emit("mpv:cache-buffering", v) {
+                    eprintln!("[events] emit failed: {e}");
+                }
             }
         }
         TAG_TRACKS => {
@@ -352,13 +401,17 @@ fn handle_client_message(app: &AppHandle, ui: &UiController, args: Vec<String>) 
             crate::show_webview(hwnd);
         }
         crate::np_info!("ui", "wake (mpv input)");
-        if let Err(e) = app.emit("ui:wake", ()) { eprintln!("[events] emit failed: {e}"); }
+        if let Err(e) = app.emit("ui:wake", ()) {
+            eprintln!("[events] emit failed: {e}");
+        }
     }
 }
 
 fn emit_playlist(app: &AppHandle, player: &Player) {
     let items = read_playlist(player);
-    if let Err(e) = app.emit("mpv:playlist", items) { eprintln!("[events] emit failed: {e}"); }
+    if let Err(e) = app.emit("mpv:playlist", items) {
+        eprintln!("[events] emit failed: {e}");
+    }
 }
 
 fn emit_tracks(app: &AppHandle, player: &Player) {
@@ -366,7 +419,9 @@ fn emit_tracks(app: &AppHandle, player: &Player) {
         .get_property_string("track-list")
         .unwrap_or_else(|| "[]".to_string());
     let tracks = parse_track_list(&json);
-    if let Err(e) = app.emit("mpv:tracks", tracks) { eprintln!("[events] emit failed: {e}"); }
+    if let Err(e) = app.emit("mpv:tracks", tracks) {
+        eprintln!("[events] emit failed: {e}");
+    }
 }
 
 fn emit_chapters(app: &AppHandle, player: &Player) {
@@ -386,7 +441,9 @@ fn emit_chapters(app: &AppHandle, player: &Player) {
             time: c.get("time").and_then(|t| t.as_f64()).unwrap_or(0.0),
         })
         .collect();
-    if let Err(e) = app.emit("mpv:chapters", parsed) { eprintln!("[events] emit failed: {e}"); }
+    if let Err(e) = app.emit("mpv:chapters", parsed) {
+        eprintln!("[events] emit failed: {e}");
+    }
 }
 
 fn emit_hdr_info(app: &AppHandle, player: &Player) {
@@ -416,5 +473,7 @@ fn emit_hdr_info(app: &AppHandle, player: &Player) {
             gamma,
             matrix,
         },
-    ) { eprintln!("[events] emit failed: {e}"); }
+    ) {
+        eprintln!("[events] emit failed: {e}");
+    }
 }

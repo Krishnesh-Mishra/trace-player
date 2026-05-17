@@ -13,10 +13,10 @@ mod thumbnailer;
 
 #[cfg(all(target_os = "windows", target_env = "msvc"))]
 mod dll_bootstrap;
-#[cfg(all(target_os = "windows", target_env = "msvc"))]
-mod splash;
 #[cfg(target_os = "windows")]
 mod smtc;
+#[cfg(all(target_os = "windows", target_env = "msvc"))]
+mod splash;
 #[cfg(target_os = "windows")]
 mod taskbar;
 
@@ -236,12 +236,20 @@ pub fn run() {
             tauri_plugin_sql::Builder::default()
                 .add_migrations(
                     "sqlite:library.db",
-                    vec![tauri_plugin_sql::Migration {
-                        version: 1,
-                        description: "create library tables",
-                        sql: include_str!("../migrations/001_library.sql"),
-                        kind: tauri_plugin_sql::MigrationKind::Up,
-                    }],
+                    vec![
+                        tauri_plugin_sql::Migration {
+                            version: 1,
+                            description: "create library tables",
+                            sql: include_str!("../migrations/001_library.sql"),
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                        tauri_plugin_sql::Migration {
+                            version: 2,
+                            description: "add file_index to items",
+                            sql: include_str!("../migrations/002_add_file_index.sql"),
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                    ],
                 )
                 .build(),
         )
@@ -282,7 +290,10 @@ pub fn run() {
                                 np_info!("ui", "found WebView2 HWND {:#x}", wv);
                                 ui_for_setup.set_webview_hwnd(wv);
                             } else {
-                                np_warn!("ui", "WebView2 HWND not found — dormancy will be JS-only");
+                                np_warn!(
+                                    "ui",
+                                    "WebView2 HWND not found — dormancy will be JS-only"
+                                );
                             }
                         }
                     }
@@ -344,7 +355,9 @@ pub fn run() {
             // First-launch CLI arg ("Open with" → we are the new process).
             let argv: Vec<String> = std::env::args().collect();
             let hover_preview = argv.iter().any(|a| a == "--hover" || a == "--hover=true");
-            let _ = app.handle().emit("mpv:hover-preview-enabled", hover_preview);
+            let _ = app
+                .handle()
+                .emit("mpv:hover-preview-enabled", hover_preview);
             if let Some(path) = first_file_arg(&argv) {
                 let app_handle = app.handle().clone();
                 std::thread::spawn(move || {
@@ -430,9 +443,21 @@ pub fn run() {
             commands::set_stream_cache,
             commands::open_archive,
             commands::set_torrent_cache_limit,
+            commands::resolve_torrent_files,
+            commands::resolve_torrent_file,
+            commands::cancel_torrent_resolve,
+            commands::list_downloads,
+            commands::pause_download,
+            commands::resume_download,
+            commands::start_download,
+            commands::stop_download,
             library::generate_library_thumb,
+            library::read_thumb_base64,
             library::get_app_thumb_dir,
             library::read_directory_videos,
+            library::scan_common_folders,
+            library::get_file_metadata,
+            library::probe_video_info,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
@@ -626,9 +651,7 @@ fn install_windows_integrations(window: &tauri::WebviewWindow, player: Arc<Playe
             let mut tick: u32 = 0;
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(1000));
-                let paused = player_for_mirror
-                    .get_property_flag("pause")
-                    .unwrap_or(true);
+                let paused = player_for_mirror.get_property_flag("pause").unwrap_or(true);
                 if last_paused != Some(paused) {
                     if let Some(ref s) = smtc_for_mirror {
                         s.set_playing(!paused);

@@ -76,10 +76,11 @@ impl TaskbarToolbar {
             // which we accept.
             let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 
-            let taskbar: ITaskbarList3 =
-                CoCreateInstance(&TaskbarList, None, CLSCTX_INPROC_SERVER)
-                    .map_err(|e| format!("CoCreateInstance(TaskbarList): {e}"))?;
-            taskbar.HrInit().map_err(|e| format!("ITaskbarList3::HrInit: {e}"))?;
+            let taskbar: ITaskbarList3 = CoCreateInstance(&TaskbarList, None, CLSCTX_INPROC_SERVER)
+                .map_err(|e| format!("CoCreateInstance(TaskbarList): {e}"))?;
+            taskbar
+                .HrInit()
+                .map_err(|e| format!("ITaskbarList3::HrInit: {e}"))?;
 
             let prev_icon = make_icon(IconKind::Prev)?;
             let next_icon = make_icon(IconKind::Next)?;
@@ -152,7 +153,11 @@ impl TaskbarToolbar {
         }
         *g = playing;
         unsafe {
-            let icon = if playing { self.pause_icon } else { self.play_icon };
+            let icon = if playing {
+                self.pause_icon
+            } else {
+                self.play_icon
+            };
             let buttons = [
                 make_button(ID_PREV, self.prev_icon, "Previous"),
                 make_button(ID_PLAYPAUSE, icon, if playing { "Pause" } else { "Play" }),
@@ -263,7 +268,7 @@ unsafe fn make_icon(kind: IconKind) -> Result<HICON, String> {
             return;
         }
         let idx = (y as usize * ICON_SIZE + x as usize) * 4;
-        pixels[idx] = 255;     // B
+        pixels[idx] = 255; // B
         pixels[idx + 1] = 255; // G
         pixels[idx + 2] = 255; // R
         pixels[idx + 3] = 255; // A
@@ -274,27 +279,41 @@ unsafe fn make_icon(kind: IconKind) -> Result<HICON, String> {
             // Right-pointing triangle.
             for y in 4..20 {
                 let span = y.min(23 - y) - 3;
-                if span <= 0 { continue; }
+                if span <= 0 {
+                    continue;
+                }
                 let max_x = 8 + span as i32;
-                for x in 8..=max_x { paint(x, y as i32); }
+                for x in 8..=max_x {
+                    paint(x, y as i32);
+                }
             }
         }
         IconKind::Pause => {
             for y in 5..19 {
-                for x in 7..10 { paint(x as i32, y as i32); }
-                for x in 14..17 { paint(x as i32, y as i32); }
+                for x in 7..10 {
+                    paint(x as i32, y as i32);
+                }
+                for x in 14..17 {
+                    paint(x as i32, y as i32);
+                }
             }
         }
         IconKind::Prev => {
             // Vertical bar at x=6, plus a left-pointing triangle.
             for y in 5..19 {
-                for x in 5..7 { paint(x as i32, y as i32); }
+                for x in 5..7 {
+                    paint(x as i32, y as i32);
+                }
             }
             for y in 5..19 {
                 let half = (y as i32 - 12).abs();
                 let span = 7 - half.min(7);
-                if span <= 0 { continue; }
-                for x in (16 - span as i32)..16 { paint(x, y as i32); }
+                if span <= 0 {
+                    continue;
+                }
+                for x in (16 - span as i32)..16 {
+                    paint(x, y as i32);
+                }
             }
         }
         IconKind::Next => {
@@ -302,11 +321,17 @@ unsafe fn make_icon(kind: IconKind) -> Result<HICON, String> {
             for y in 5..19 {
                 let half = (y as i32 - 12).abs();
                 let span = 7 - half.min(7);
-                if span <= 0 { continue; }
-                for x in 8..=(8 + span as i32) { paint(x, y as i32); }
+                if span <= 0 {
+                    continue;
+                }
+                for x in 8..=(8 + span as i32) {
+                    paint(x, y as i32);
+                }
             }
             for y in 5..19 {
-                for x in 17..19 { paint(x as i32, y as i32); }
+                for x in 17..19 {
+                    paint(x as i32, y as i32);
+                }
             }
         }
     }

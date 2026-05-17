@@ -45,6 +45,7 @@ import DevTester from "./components/DevTester";
 import LibraryModal from "./components/library/LibraryModal";
 import GestureLayer from "./components/GestureLayer";
 import PipBar from "./components/PipBar";
+import AppContextMenu from "./components/AppContextMenu";
 
 type TrackList = { audio: Track[]; subtitle: Track[] };
 
@@ -705,6 +706,14 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    if (!storeLoaded || hasFile) return;
+    const timer = setTimeout(() => {
+      if (!hasFileRef.current) setLibraryOpen(true);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [storeLoaded, hasFile]);
+
   // Save on change (only after the initial load completes — otherwise the
   // first-render defaults would overwrite saved values).
   useEffect(() => {
@@ -1198,14 +1207,12 @@ export default function App() {
     // Return focus to the document body so subsequent Space/k keypresses reach
     // the window handler instead of re-triggering the clicked playlist button.
     (document.activeElement as HTMLElement)?.blur();
-    // Same loading splash as loadPath — playlist transitions also have the
-    // transparent gap until mpv:file-loaded for the next entry fires.
     if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
     setIsLoading(true);
     loadingTimerRef.current = setTimeout(() => {
       setIsLoading(false);
       loadingTimerRef.current = null;
-    }, 10_000);
+    }, 1_000);
     invoke("playlist_play_index", { idx }).catch((e) => {
       clearLoadingState();
       setError(String(e));
@@ -1536,8 +1543,8 @@ export default function App() {
   // opened a local file or a URL. Errors propagate so the dialog can
   // display them inline instead of swallowing.
   const handleOpenSource = useCallback(
-    async (url: string, append: boolean) => {
-      log.info("load", `open_source append=${append} url=${url}`);
+    async (url: string, append: boolean, fileIndex?: number) => {
+      log.info("load", `open_source append=${append} url=${url} fileIndex=${fileIndex}`);
       const wasEmpty = !hasFileRef.current;
       const effectiveAppend = append && !wasEmpty;
 
@@ -1562,7 +1569,7 @@ export default function App() {
           lower.endsWith(".7z") ||
           lower.endsWith(".rar");
         const cmd = isArchive ? "open_archive" : "open_source";
-        await invoke(cmd, { url, append: effectiveAppend });
+        await invoke(cmd, { url, append: effectiveAppend, fileIndex: fileIndex ?? null });
         if (!append || wasEmpty) {
           setHasFile(true);
           setError(null);
@@ -1875,7 +1882,7 @@ export default function App() {
                 <button
                   onClick={() => setOpenSourceOpen(true)}
                   className="px-4 py-2 bg-white/10 text-white text-sm font-medium rounded-lg
-                             border border-white/15 hover:bg-white/15 active:scale-95
+                              hover:bg-white/15 active:scale-95
                              transition-all duration-100"
                 >
                   Open URL or Torrent
@@ -2000,7 +2007,7 @@ export default function App() {
             transition={{ duration: 0.15 }}
             className="absolute top-4 left-1/2 -translate-x-1/2 z-40
                        flex items-center gap-2 px-3.5 py-1.5 rounded-full
-                       bg-black/75 backdrop-blur-md border border-white/10
+                       bg-black/75 backdrop-blur-md 
                        text-white/85 select-none pointer-events-none"
           >
             <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
@@ -2197,9 +2204,9 @@ export default function App() {
           setLibraryOpen(false);
           void loadPath(path);
         }}
-        onPlayTorrent={(magnet) => {
+        onPlayTorrent={(magnet, fileIndex) => {
           setLibraryOpen(false);
-          void handleOpenSource(magnet, false);
+          void handleOpenSource(magnet, false, fileIndex);
         }}
       />
 
@@ -2246,6 +2253,22 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <AppContextMenu
+        hasFile={hasFile}
+        isPlaying={isPlaying}
+        playbackSpeed={playbackSpeed}
+        audioTracks={audioTracks}
+        subtitleTracks={subtitleTracks}
+        selectedAudioId={selectedAudio}
+        selectedSubId={selectedSub}
+        disabled={libraryOpen || subtitlePanelOpen || playlistOpen || jumpToTimeOpen || mediaInfoOpen || openSourceOpen || recentPanelOpen}
+        onPlayPause={playPause}
+        onSpeedChange={handleSpeedChange}
+        onAudioTrackChange={handleAudioTrackChange}
+        onSubtitleTrackChange={handleSubtitleTrackChange}
+        onMediaInfo={() => setMediaInfoOpen(true)}
+      />
 
       {/* Dev-only: command tester (only mounted in `npm run dev`) */}
       {import.meta.env.DEV && <DevTester />}

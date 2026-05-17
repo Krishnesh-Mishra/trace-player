@@ -81,7 +81,13 @@ pub fn parse_track_list(json: &str) -> TrackList {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let track = Track { id, title, lang, codec, selected };
+        let track = Track {
+            id,
+            title,
+            lang,
+            codec,
+            selected,
+        };
         if kind == "audio" {
             audio.push(track);
         } else {
@@ -146,7 +152,8 @@ pub fn seek(seconds: f64, mode: String, state: State<'_, AppState>) -> Result<()
         if duration > 1.0 {
             // Look up the stream URL + file size for the currently-playing file.
             let file_info = state.torrent_video_files.lock().ok().and_then(|files| {
-                files.iter()
+                files
+                    .iter()
                     .find(|(idx, _, _)| *idx == active.file_idx)
                     .map(|(_, url, size)| (url.clone(), *size))
             });
@@ -250,8 +257,7 @@ pub fn set_audio_filters(
         // Labeled so the AGC thread can read its metadata via
         // `af-metadata/agcstats/...`. length=0.04 → ~40 ms windows for fast
         // tracking of sudden peaks (shouts, explosions).
-        filters
-            .push("lavfi=[astats=metadata=1:reset=1:length=0.04]@agcstats".to_string());
+        filters.push("lavfi=[astats=metadata=1:reset=1:length=0.04]@agcstats".to_string());
     }
     let chain = filters.join(",");
     player_ref(&state)?.set_audio_filter(&chain)?;
@@ -271,10 +277,7 @@ pub fn set_audio_filters(
         }
         params.user_volume
     };
-    state
-        .agc
-        .enabled
-        .store(dynamic_enabled, Ordering::Relaxed);
+    state.agc.enabled.store(dynamic_enabled, Ordering::Relaxed);
 
     // When AGC turns off, restore mpv volume to the user's slider position
     // (it may currently sit at a boosted/cut value from the last AGC tick).
@@ -286,10 +289,7 @@ pub fn set_audio_filters(
 }
 
 #[tauri::command]
-pub fn set_subtitle_style(
-    style: SubtitleStyle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn set_subtitle_style(style: SubtitleStyle, state: State<'_, AppState>) -> Result<(), String> {
     player_ref(&state)?.set_subtitle_style(
         &style.font,
         style.size,
@@ -304,10 +304,7 @@ pub fn set_subtitle_style(
 }
 
 #[tauri::command]
-pub fn set_subtitle_delay(
-    delay_ms: f64,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn set_subtitle_delay(delay_ms: f64, state: State<'_, AppState>) -> Result<(), String> {
     player_ref(&state)?.set_subtitle_delay(delay_ms / 1000.0)
 }
 
@@ -381,10 +378,7 @@ pub struct ImageParams {
 }
 
 #[tauri::command]
-pub fn set_image_params(
-    params: ImageParams,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn set_image_params(params: ImageParams, state: State<'_, AppState>) -> Result<(), String> {
     let p = player_ref(&state)?;
     p.set_int_prop("brightness", params.brightness)?;
     p.set_int_prop("contrast", params.contrast)?;
@@ -543,14 +537,16 @@ pub fn set_audio_fx(
     }
     if night_mode {
         filters.push(
-            "lavfi=[acompressor=threshold=0.089:ratio=4:attack=5:release=50:makeup=2]"
-                .to_string(),
+            "lavfi=[acompressor=threshold=0.089:ratio=4:attack=5:release=50:makeup=2]".to_string(),
         );
     }
     // Insert EQ after compression so it shapes the post-compressed signal.
     if eq_enabled {
         if eq_bands.len() != 10 {
-            eprintln!("[cmd] set_audio_fx: expected 10 eq_bands, got {}", eq_bands.len());
+            eprintln!(
+                "[cmd] set_audio_fx: expected 10 eq_bands, got {}",
+                eq_bands.len()
+            );
         }
         if eq_bands.len() == 10 {
             let mut bands = [0.0f64; 10];
@@ -563,9 +559,7 @@ pub fn set_audio_fx(
         }
     }
     if dynamic_enabled {
-        filters.push(
-            "lavfi=[astats=metadata=1:reset=1:length=0.04]@agcstats".to_string(),
-        );
+        filters.push("lavfi=[astats=metadata=1:reset=1:length=0.04]@agcstats".to_string());
     }
     let chain = filters.join(",");
     p.set_audio_filter(&chain)?;
@@ -584,10 +578,7 @@ pub fn set_audio_fx(
         }
         params.user_volume
     };
-    state
-        .agc
-        .enabled
-        .store(dynamic_enabled, Ordering::Relaxed);
+    state.agc.enabled.store(dynamic_enabled, Ordering::Relaxed);
     if !dynamic_enabled {
         p.set_volume(user_vol)?;
     }
@@ -639,18 +630,12 @@ pub fn set_vsync(enabled: bool, state: State<'_, AppState>) -> Result<(), String
 /// it as an init option so the very first fullscreen of the session honors
 /// the user's saved preference.
 #[tauri::command]
-pub fn set_exclusive_fullscreen(
-    enabled: bool,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn set_exclusive_fullscreen(enabled: bool, state: State<'_, AppState>) -> Result<(), String> {
     let p = player_ref(&state)?;
     // d3d11-exclusive-fs is gpu-next-aware but only meaningful when
     // gpu-context=d3d11 (which we force on Windows). Use the optional
     // path so non-Windows / non-d3d11 builds don't error.
-    let _ = p.set_string_prop_pub(
-        "d3d11-exclusive-fs",
-        if enabled { "yes" } else { "no" },
-    );
+    let _ = p.set_string_prop_pub("d3d11-exclusive-fs", if enabled { "yes" } else { "no" });
     Ok(())
 }
 
@@ -698,15 +683,13 @@ pub fn set_screenshot_dir(path: String, state: State<'_, AppState>) -> Result<()
 /// Loop the current file. mpv's `loop-file` accepts "inf"/"no"/integer count.
 #[tauri::command]
 pub fn set_loop_file(enabled: bool, state: State<'_, AppState>) -> Result<(), String> {
-    player_ref(&state)?
-        .set_string_prop_pub("loop-file", if enabled { "inf" } else { "no" })
+    player_ref(&state)?.set_string_prop_pub("loop-file", if enabled { "inf" } else { "no" })
 }
 
 /// Loop the entire playlist. Independent from loop-file — both can be on.
 #[tauri::command]
 pub fn set_loop_playlist(enabled: bool, state: State<'_, AppState>) -> Result<(), String> {
-    player_ref(&state)?
-        .set_string_prop_pub("loop-playlist", if enabled { "inf" } else { "no" })
+    player_ref(&state)?.set_string_prop_pub("loop-playlist", if enabled { "inf" } else { "no" })
 }
 
 /// One-shot playlist shuffle (no toggle — mpv mutates the list in place).
@@ -808,7 +791,10 @@ pub fn read_playlist(p: &Player) -> Vec<PlaylistItem> {
                 .get("title")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            current: item.get("current").and_then(|v| v.as_bool()).unwrap_or(false),
+            current: item
+                .get("current")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         })
         .collect()
 }
@@ -899,7 +885,9 @@ pub fn frame_step(backward: bool, state: State<'_, AppState>) -> Result<(), Stri
 pub fn force_redraw(state: State<'_, AppState>) -> Result<(), String> {
     crate::np_info!("cmd", "force_redraw");
     let p = player_ref(&state)?;
-    if let Err(e) = p.command(&["seek", "0", "exact"]) { eprintln!("[cmd] force_redraw seek failed (ok): {e}"); }
+    if let Err(e) = p.command(&["seek", "0", "exact"]) {
+        eprintln!("[cmd] force_redraw seek failed (ok): {e}");
+    }
     Ok(())
 }
 
@@ -907,10 +895,7 @@ pub fn force_redraw(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn set_deinterlace(enabled: bool, state: State<'_, AppState>) -> Result<(), String> {
-    player_ref(&state)?.set_string_prop_pub(
-        "deinterlace",
-        if enabled { "yes" } else { "no" },
-    )
+    player_ref(&state)?.set_string_prop_pub("deinterlace", if enabled { "yes" } else { "no" })
 }
 
 // ── Audio output device ──────────────────────────────────────────────────────
@@ -1069,10 +1054,11 @@ pub fn get_pipeline_info(state: State<'_, AppState>) -> Result<PipelineInfo, Str
 pub async fn open_source(
     url: String,
     append: bool,
+    file_index: Option<usize>,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    crate::np_info!("cmd", "open_source url={} append={}", url, append);
+    crate::np_info!("cmd", "open_source url={} append={} file_index={:?}", url, append, file_index);
     let p = player_ref(&state)?;
     let mode = if append { "append-play" } else { "replace" };
 
@@ -1100,6 +1086,20 @@ pub async fn open_source(
                 return Err(e);
             }
         };
+        if let Some(idx) = file_index {
+            let video = added
+                .videos
+                .iter()
+                .find(|v| v.idx == idx)
+                .ok_or_else(|| format!("file index {} not found in torrent", idx))?;
+            let single = AddedTorrent {
+                id: added.id,
+                info_hash: added.info_hash.clone(),
+                name: added.name.clone(),
+                videos: vec![video.clone()],
+            };
+            return load_torrent_into_playlist(&state, p, single, mode, &app);
+        }
         return load_torrent_into_playlist(&state, p, added, mode, &app);
     }
 
@@ -1127,9 +1127,11 @@ pub async fn open_source(
     // Direct streams — drop old sources immediately before handing the URL to
     // mpv, which replaces playback in the same command. The drop is safe here
     // because there's no async gap between drop and loadfile.
-    let direct = ["http://", "https://", "rtsp://", "rtmp://", "rtmps://", "mms://", "file://"]
-        .iter()
-        .any(|s| lower.starts_with(s));
+    let direct = [
+        "http://", "https://", "rtsp://", "rtmp://", "rtmps://", "mms://", "file://",
+    ]
+    .iter()
+    .any(|s| lower.starts_with(s));
     if direct {
         if !append {
             drop_previous_sources(state.inner());
@@ -1241,7 +1243,9 @@ fn load_torrent_into_playlist(
         *g = added.videos.iter().map(|v| v.idx).collect();
     }
     if let Ok(mut g) = state.torrent_video_files.lock() {
-        *g = added.videos.iter()
+        *g = added
+            .videos
+            .iter()
             .map(|v| (v.idx, v.stream_url.clone(), v.length))
             .collect();
     }
@@ -1254,6 +1258,211 @@ fn load_torrent_into_playlist(
     }
     Ok(())
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TorrentVideoInfo {
+    pub idx: usize,
+    pub name: String,
+    pub length: u64,
+}
+
+#[tauri::command]
+pub async fn resolve_torrent_files(
+    magnet: String,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<Vec<TorrentVideoInfo>, String> {
+    app.emit("library:resolve-progress", "connecting").ok();
+    crate::np_info!("resolve", "starting resolve for magnet");
+    let added = ensure_streaming(&state, &app)?.add_magnet(&magnet)?;
+    crate::np_info!("resolve", "add_magnet returned id={}, {} video(s)", added.id, added.videos.len());
+    app.emit("library:resolve-progress", "fetching_metadata").ok();
+
+    if let Ok(mut g) = state.resolving_torrent_id.lock() {
+        *g = Some(added.id);
+    }
+
+    let videos: Vec<TorrentVideoInfo> = added
+        .videos
+        .iter()
+        .map(|v| TorrentVideoInfo {
+            idx: v.idx,
+            name: v.name.clone(),
+            length: v.length,
+        })
+        .collect();
+
+    if let Ok(mut g) = state.resolving_torrent_id.lock() {
+        *g = None;
+    }
+
+    if let Ok(guard) = state.streaming.lock() {
+        if let Some(sess) = guard.as_ref() {
+            let _ = sess.forget(added.id);
+        }
+    }
+    app.emit("library:resolve-progress", "done").ok();
+    crate::np_info!("resolve", "resolve complete, {} video(s) found", videos.len());
+    Ok(videos)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedTorrent {
+    pub magnet: String,
+    pub name: String,
+    pub videos: Vec<TorrentVideoInfo>,
+}
+
+#[tauri::command]
+pub async fn resolve_torrent_file(
+    path: String,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<ResolvedTorrent, String> {
+    app.emit("library:resolve-progress", "connecting").ok();
+    crate::np_info!("resolve", "reading .torrent file: {}", path);
+    let bytes = std::fs::read(&path).map_err(|e| format!("read .torrent: {e}"))?;
+
+    let added = ensure_streaming(&state, &app)?.add_torrent_bytes(&bytes)?;
+    crate::np_info!("resolve", "torrent file added id={}, {} video(s)", added.id, added.videos.len());
+    app.emit("library:resolve-progress", "fetching_metadata").ok();
+
+    if let Ok(mut g) = state.resolving_torrent_id.lock() {
+        *g = Some(added.id);
+    }
+
+    let magnet = format!("magnet:?xt=urn:btih:{}", added.info_hash);
+    let torrent_name = added.name;
+    let videos: Vec<TorrentVideoInfo> = added
+        .videos
+        .iter()
+        .map(|v| TorrentVideoInfo {
+            idx: v.idx,
+            name: v.name.clone(),
+            length: v.length,
+        })
+        .collect();
+
+    if let Ok(mut g) = state.resolving_torrent_id.lock() {
+        *g = None;
+    }
+
+    if let Ok(stream_guard) = state.streaming.lock() {
+        if let Some(sess) = stream_guard.as_ref() {
+            let _ = sess.forget(added.id);
+        }
+    }
+    app.emit("library:resolve-progress", "done").ok();
+    crate::np_info!("resolve", "torrent file resolve complete, {} video(s)", videos.len());
+    Ok(ResolvedTorrent {
+        magnet,
+        name: torrent_name,
+        videos,
+    })
+}
+
+#[tauri::command]
+pub fn cancel_torrent_resolve(state: State<'_, AppState>) -> Result<(), String> {
+    if let Ok(mut g) = state.resolving_torrent_id.lock() {
+        if let Some(id) = g.take() {
+            crate::np_info!("resolve", "cancelling resolve, forgetting torrent {}", id);
+            if let Ok(stream_guard) = state.streaming.lock() {
+                if let Some(sess) = stream_guard.as_ref() {
+                    let _ = sess.forget(id);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn list_downloads(state: State<'_, AppState>) -> Result<Vec<crate::streaming::TorrentStats>, String> {
+    let ids: Vec<u32> = state
+        .torrent_ids
+        .lock()
+        .map_err(|e| format!("lock: {e}"))?
+        .iter()
+        .copied()
+        .collect();
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let guard = state
+        .streaming
+        .lock()
+        .map_err(|e| format!("streaming lock: {e}"))?;
+    let sess = guard.as_ref().ok_or("no streaming session")?;
+    let mut results = Vec::new();
+    for id in ids {
+        if let Ok(stats) = sess.get_stats(id) {
+            results.push(stats);
+        }
+    }
+    Ok(results)
+}
+
+#[tauri::command]
+pub fn pause_download(id: u32, state: State<'_, AppState>) -> Result<(), String> {
+    let guard = state
+        .streaming
+        .lock()
+        .map_err(|e| format!("lock: {e}"))?;
+    let sess = guard.as_ref().ok_or("no streaming session")?;
+    sess.pause_torrent(id)
+}
+
+#[tauri::command]
+pub fn resume_download(id: u32, state: State<'_, AppState>) -> Result<(), String> {
+    let guard = state
+        .streaming
+        .lock()
+        .map_err(|e| format!("lock: {e}"))?;
+    let sess = guard.as_ref().ok_or("no streaming session")?;
+    sess.resume_torrent(id)
+}
+
+#[tauri::command]
+pub async fn start_download(
+    magnet: String,
+    file_index: Option<u32>,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<u32, String> {
+    let added = ensure_streaming(&state, &app)?.add_magnet(&magnet)?;
+    if let Some(fi) = file_index {
+        let guard = state
+            .streaming
+            .lock()
+            .map_err(|e| format!("lock: {e}"))?;
+        if let Some(sess) = guard.as_ref() {
+            let _ = sess.set_only_files(added.id, &[fi as usize]);
+        }
+    }
+    if let Ok(mut ids) = state.torrent_ids.lock() {
+        ids.insert(added.id);
+    }
+    crate::np_info!("download", "started download torrent_id={}", added.id);
+    Ok(added.id)
+}
+
+#[tauri::command]
+pub fn stop_download(id: u32, state: State<'_, AppState>) -> Result<(), String> {
+    if let Ok(mut ids) = state.torrent_ids.lock() {
+        ids.remove(&id);
+    }
+    let guard = state
+        .streaming
+        .lock()
+        .map_err(|e| format!("lock: {e}"))?;
+    if let Some(sess) = guard.as_ref() {
+        let _ = sess.forget(id);
+    }
+    Ok(())
+}
+
 
 /// Lazy rqbit spawn. Held under the AppState mutex; subsequent calls reuse
 /// the running session. `app` is forwarded to the session so its stdout
@@ -1271,8 +1480,7 @@ fn ensure_streaming<'a>(
             "rqbit.exe not found in bin/ — installer must place it next to NewPlayer.exe"
                 .to_string()
         })?;
-        let session =
-            StreamingSession::start(&exe, &streaming::session_dir(), app.clone())?;
+        let session = StreamingSession::start(&exe, &streaming::session_dir(), app.clone())?;
         *guard = Some(session);
     }
     // First-time setup: kick off the stats poller so the LoadingSourceOverlay
@@ -1303,49 +1511,51 @@ fn spawn_torrent_stats_poller(state: &State<'_, AppState>, app: &AppHandle) {
     std::thread::spawn(move || {
         let mut idle_count = 0u32;
         loop {
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-        // Pick the torrent to poll: active first, fall back to any registered.
-        let id_opt: Option<u32> = {
-            let active_id = active
-                .lock()
-                .ok()
-                .and_then(|g| g.as_ref().map(|a| a.torrent_id));
-            active_id.or_else(|| {
-                torrent_ids
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            // Pick the torrent to poll: active first, fall back to any registered.
+            let id_opt: Option<u32> = {
+                let active_id = active
                     .lock()
                     .ok()
-                    .and_then(|g| g.iter().next().copied())
-            })
-        };
-        if id_opt.is_none() {
-            idle_count += 1;
-            if idle_count > 60 { break; }  // exit after ~60s of no active torrent
-            continue;
-        } else {
-            idle_count = 0;
-        }
-        let Some(id) = id_opt else { continue };
-        // Hold the streaming lock briefly to issue the stats GET. The
-        // request itself takes ~10-30 ms locally; other commands wait for
-        // it but don't perceive the delay.
-        let stats = {
-            let guard = match streaming.lock() {
-                Ok(g) => g,
-                Err(_) => continue,
+                    .and_then(|g| g.as_ref().map(|a| a.torrent_id));
+                active_id.or_else(|| {
+                    torrent_ids
+                        .lock()
+                        .ok()
+                        .and_then(|g| g.iter().next().copied())
+                })
             };
-            match guard.as_ref() {
-                Some(s) => s.get_stats(id),
-                None => continue,
+            if id_opt.is_none() {
+                idle_count += 1;
+                if idle_count > 60 {
+                    break;
+                } // exit after ~60s of no active torrent
+                continue;
+            } else {
+                idle_count = 0;
             }
-        };
-        match stats {
-            Ok(s) => {
-                let _ = app.emit("mpv:torrent-stats", s);
+            let Some(id) = id_opt else { continue };
+            // Hold the streaming lock briefly to issue the stats GET. The
+            // request itself takes ~10-30 ms locally; other commands wait for
+            // it but don't perceive the delay.
+            let stats = {
+                let guard = match streaming.lock() {
+                    Ok(g) => g,
+                    Err(_) => continue,
+                };
+                match guard.as_ref() {
+                    Some(s) => s.get_stats(id),
+                    None => continue,
+                }
+            };
+            match stats {
+                Ok(s) => {
+                    let _ = app.emit("mpv:torrent-stats", s);
+                }
+                Err(e) => {
+                    crate::np_debug!("rqbit", "stats poll failed: {e}");
+                }
             }
-            Err(e) => {
-                crate::np_debug!("rqbit", "stats poll failed: {e}");
-            }
-        }
         } // end loop
     });
 }
@@ -1410,13 +1620,10 @@ pub fn handle_torrent_advance(state: &AppState, url: &str) {
     };
 
     // Track previous file for the active-torrent update below.
-    let prev = state
-        .active_torrent
-        .lock()
-        .ok()
-        .and_then(|g| g.as_ref().and_then(|a| {
-            (a.torrent_id == torrent_id).then_some(a.file_idx)
-        }));
+    let prev = state.active_torrent.lock().ok().and_then(|g| {
+        g.as_ref()
+            .and_then(|a| (a.torrent_id == torrent_id).then_some(a.file_idx))
+    });
 
     // Mark the current video file plus the next two video files as wanted.
     // Rqbit only downloads wanted files, so limiting the window means the
@@ -1429,9 +1636,7 @@ pub fn handle_torrent_advance(state: &AppState, url: &str) {
     // retry. This gives the "play any episode" guarantee without downloading
     // the whole season upfront.
     let wanted: Vec<usize> = torrent_sliding_window(
-        state,
-        file_idx,
-        3, // current + next 2
+        state, file_idx, 3, // current + next 2
     );
 
     // Update active item before issuing the rqbit call so a fast follow-up
@@ -1470,11 +1675,7 @@ pub fn handle_torrent_advance(state: &AppState, url: &str) {
 ///
 /// Returns `true` if recovery was attempted (caller should suppress the
 /// normal mpv:eof error toast). Returns `false` for non-torrent URLs.
-pub fn try_recover_torrent_load(
-    state: &AppState,
-    app: &AppHandle,
-    failed_url: &str,
-) -> bool {
+pub fn try_recover_torrent_load(state: &AppState, app: &AppHandle, failed_url: &str) -> bool {
     let Some((torrent_id, file_idx)) = streaming::parse_stream_url(failed_url) else {
         return false;
     };
@@ -1518,7 +1719,9 @@ pub fn try_recover_torrent_load(
                     return;
                 }
             };
-            guard.as_ref().map(|s| s.set_only_files(torrent_id, &wanted))
+            guard
+                .as_ref()
+                .map(|s| s.set_only_files(torrent_id, &wanted))
         };
         match result {
             Some(Ok(_)) => {
@@ -1652,10 +1855,7 @@ pub async fn open_archive(
         "mpv:source-loading",
         SourceLoadingPayload {
             phase: "extract".into(),
-            label: format!(
-                "Extracting {}",
-                handle.entries[0].rel_path.display()
-            ),
+            label: format!("Extracting {}", handle.entries[0].rel_path.display()),
             progress: None,
         },
     );
@@ -1679,11 +1879,7 @@ pub async fn open_archive(
     p.command(&["loadfile", &path_to_mpv_string(&first_path), mode])?;
     for entry in handle.entries.iter().skip(1) {
         let p2 = handle.cache_dir.join(&entry.rel_path);
-        p.command(&[
-            "loadfile",
-            &path_to_mpv_string(&p2),
-            "append-play",
-        ])?;
+        p.command(&["loadfile", &path_to_mpv_string(&p2), "append-play"])?;
     }
 
     // Background prefetch of entry 1 so the natural advance is seamless.
@@ -1778,11 +1974,7 @@ pub fn handle_archive_advance(state: &AppState, path_str: &str) {
 /// entry that hasn't been extracted yet (manual playlist skip past the
 /// prefetch window). Extracts the entry off-thread, then asks mpv to retry
 /// via `loadfile replace` so the user sees a brief stall, then playback.
-pub fn try_recover_archive_load(
-    state: &AppState,
-    app: &AppHandle,
-    failed_path: &str,
-) -> bool {
+pub fn try_recover_archive_load(state: &AppState, app: &AppHandle, failed_path: &str) -> bool {
     let path = PathBuf::from(failed_path);
     let handle = match state
         .archive_registry
@@ -1812,10 +2004,7 @@ pub fn try_recover_archive_load(
             "mpv:source-loading",
             SourceLoadingPayload {
                 phase: "extract".into(),
-                label: format!(
-                    "Extracting {}",
-                    handle.entries[idx].rel_path.display()
-                ),
+                label: format!("Extracting {}", handle.entries[idx].rel_path.display()),
                 progress: None,
             },
         );
@@ -1825,11 +2014,7 @@ pub fn try_recover_archive_load(
                     s.insert(extracted.clone());
                 }
                 let _ = app2.emit("mpv:source-loading-done", ());
-                let _ = player.command(&[
-                    "loadfile",
-                    &path_to_mpv_string(&extracted),
-                    "replace",
-                ]);
+                let _ = player.command(&["loadfile", &path_to_mpv_string(&extracted), "replace"]);
             }
             Err(e) => {
                 let _ = app2.emit("mpv:source-loading-done", ());
@@ -1839,7 +2024,6 @@ pub fn try_recover_archive_load(
     });
     true
 }
-
 
 /// Toggle the larger demuxer cache used for network sources. Called by the
 /// frontend on `mpv:file-loaded` after detecting a non-file URL — mpv
@@ -1916,14 +2100,15 @@ const PIP_MARGIN: i32 = 20;
 /// stashed in `AppState::pip` so `exit_pip` can restore it. Idempotent: a
 /// 2nd call while already in PiP is a no-op.
 #[tauri::command]
-pub fn enter_pip(
-    window: tauri::WebviewWindow,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn enter_pip(window: tauri::WebviewWindow, state: State<'_, AppState>) -> Result<(), String> {
     use tauri::{LogicalPosition, LogicalSize};
 
     {
-        let g = state.pip.saved.lock().map_err(|e| format!("pip lock: {e}"))?;
+        let g = state
+            .pip
+            .saved
+            .lock()
+            .map_err(|e| format!("pip lock: {e}"))?;
         if g.is_some() {
             return Ok(());
         }
@@ -1941,7 +2126,11 @@ pub fn enter_pip(
         decorations: window.is_decorated().unwrap_or(true),
     };
     {
-        let mut g = state.pip.saved.lock().map_err(|e| format!("pip lock: {e}"))?;
+        let mut g = state
+            .pip
+            .saved
+            .lock()
+            .map_err(|e| format!("pip lock: {e}"))?;
         *g = Some(saved);
     }
 
@@ -1975,14 +2164,15 @@ pub fn enter_pip(
 }
 
 #[tauri::command]
-pub fn exit_pip(
-    window: tauri::WebviewWindow,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn exit_pip(window: tauri::WebviewWindow, state: State<'_, AppState>) -> Result<(), String> {
     use tauri::{LogicalPosition, LogicalSize};
 
     let g = {
-        let mut guard = state.pip.saved.lock().map_err(|e| format!("pip lock: {e}"))?;
+        let mut guard = state
+            .pip
+            .saved
+            .lock()
+            .map_err(|e| format!("pip lock: {e}"))?;
         guard.take()
     };
     let Some(g) = g else { return Ok(()) };

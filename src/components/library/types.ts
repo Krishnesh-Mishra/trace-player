@@ -1,4 +1,4 @@
-export type LibraryTab = "torrents" | "local" | "explore";
+export type LibraryTab = "torrents" | "local" | "explore" | "downloads";
 
 export interface LibraryItem {
   id: number;
@@ -7,12 +7,19 @@ export interface LibraryItem {
   title: string;
   path: string | null;
   magnet_uri: string | null;
+  file_index: number | null;
   file_size: number | null;
   duration: number | null;
   thumb_path: string | null;
   last_played: number | null;
   play_count: number;
   added_at: number;
+}
+
+export interface TorrentVideoInfo {
+  idx: number;
+  name: string;
+  length: number;
 }
 
 export interface FolderEntry {

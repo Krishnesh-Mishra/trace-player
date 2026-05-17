@@ -144,7 +144,7 @@ export default function PlaylistPanel({
           <div className="flex-1 overflow-y-auto py-2">
             {items.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center px-6">
-                <div className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-3">
+                <div className="w-12 h-12 rounded-full bg-white/5  flex items-center justify-center mb-3">
                   <Play className="w-4 h-4 text-white/40 translate-x-0.5" />
                 </div>
                 <p className="text-xs text-white/60">Playlist is empty</p>

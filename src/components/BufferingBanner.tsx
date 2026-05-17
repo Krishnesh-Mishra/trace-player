@@ -167,7 +167,7 @@ export default function BufferingBanner({
             exit={{ scale: 0.96, y: 4 }}
             transition={{ type: "spring", stiffness: 380, damping: 28 }}
             className="flex flex-col items-center gap-3 px-6 py-5
-                       bg-[#111]/85 backdrop-blur-xl border border-white/10
+                       bg-[#111]/85 backdrop-blur-xl 
                        rounded-2xl shadow-2xl"
           >
             <Loader2 className="w-6 h-6 text-white/85 animate-spin" />

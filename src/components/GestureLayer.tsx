@@ -86,6 +86,7 @@ export default function GestureLayer({
   const dist = (a: Pointer, b: Pointer) => Math.hypot(a.x - b.x, a.y - b.y);
 
   const onPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
     elRef.current?.setPointerCapture(e.pointerId);
     const p: Pointer = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now() };
     pointers.current.set(e.pointerId, p);
@@ -279,7 +280,7 @@ export default function GestureLayer({
             className={`absolute top-1/2 ${
               seekFx.side === "left" ? "left-[15%]" : "right-[15%]"
             } -translate-y-1/2 w-24 h-24 rounded-full bg-white/12 backdrop-blur-sm
-              flex items-center justify-center pointer-events-none border border-white/20`}
+              flex items-center justify-center pointer-events-none `}
           >
             <span className="text-white text-sm font-medium">
               {seekFx.side === "left" ? "« 10s" : "10s »"}
@@ -297,7 +298,7 @@ export default function GestureLayer({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 6, transition: { duration: 0.18 } }}
             className="absolute top-12 left-1/2 -translate-x-1/2 pointer-events-none
-                       px-4 py-2.5 rounded-xl bg-black/55 backdrop-blur-md border border-white/15
+                       px-4 py-2.5 rounded-xl bg-black/55 backdrop-blur-md 
                        flex items-center gap-3 min-w-[200px]"
           >
             <span className="text-[11px] uppercase tracking-wider text-white/60 w-16">

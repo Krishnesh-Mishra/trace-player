@@ -1,24 +1,55 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FolderOpen, Magnet, X } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { FolderOpen, Magnet, X, Loader2, FileUp } from "lucide-react";
+import type { TorrentVideoInfo } from "./types";
+
+interface ResolvedTorrent {
+  magnet: string;
+  name: string;
+  videos: TorrentVideoInfo[];
+}
 
 interface Props {
   open: boolean;
   onClose: () => void;
   onImportLocal: (path: string, title: string) => void;
-  onImportTorrent: (magnetUri: string, title: string) => void;
+  onImportTorrentResolved: (magnetUri: string, name: string, videos: TorrentVideoInfo[]) => void;
 }
+
+const PHASE_LABELS: Record<string, string> = {
+  connecting: "Connecting to peers...",
+  fetching_metadata: "Fetching file list...",
+  done: "Processing...",
+};
 
 export default function ImportDialog({
   open: isOpen,
   onClose,
   onImportLocal,
-  onImportTorrent,
+  onImportTorrentResolved,
 }: Props) {
   const [mode, setMode] = useState<"pick" | "torrent">("pick");
   const [magnetInput, setMagnetInput] = useState("");
   const [error, setError] = useState("");
+  const [resolving, setResolving] = useState(false);
+  const [resolvePhase, setResolvePhase] = useState("");
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!resolving) return;
+    const unlisten = listen<string>("library:resolve-progress", (event) => {
+      if (mountedRef.current) setResolvePhase(event.payload);
+    });
+    return () => { void unlisten.then((fn) => fn()); };
+  }, [resolving]);
 
   const handleLocalFile = async () => {
     const result = await open({
@@ -43,7 +74,7 @@ export default function ImportDialog({
     }
   };
 
-  const handleTorrentSubmit = () => {
+  const handleTorrentSubmit = async () => {
     const val = magnetInput.trim();
     if (!val) return;
     if (!val.startsWith("magnet:")) {
@@ -54,16 +85,66 @@ export default function ImportDialog({
     const title = dn
       ? decodeURIComponent(dn).replace(/\+/g, " ")
       : "Torrent";
-    onImportTorrent(val, title);
-    setMagnetInput("");
+
+    setResolving(true);
+    setResolvePhase("connecting");
     setError("");
-    onClose();
+    try {
+      const videos = await invoke<TorrentVideoInfo[]>("resolve_torrent_files", { magnet: val });
+      if (mountedRef.current) {
+        onImportTorrentResolved(val, title, videos);
+        setResolving(false);
+        setResolvePhase("");
+        setMagnetInput("");
+        onClose();
+      }
+    } catch (e) {
+      if (mountedRef.current) {
+        const msg = e instanceof Error ? e.message : typeof e === "string" ? e : "Failed to resolve torrent";
+        setError(msg);
+        setResolving(false);
+        setResolvePhase("");
+      }
+    }
+  };
+
+  const handleTorrentFile = async () => {
+    const result = await open({
+      multiple: false,
+      filters: [{ name: "Torrent", extensions: ["torrent"] }],
+    });
+    if (!result) return;
+    const path = Array.isArray(result) ? result[0] : result;
+    setResolving(true);
+    setResolvePhase("connecting");
+    setError("");
+    try {
+      const resolved = await invoke<ResolvedTorrent>("resolve_torrent_file", { path });
+      if (mountedRef.current) {
+        onImportTorrentResolved(resolved.magnet, resolved.name, resolved.videos);
+        setResolving(false);
+        setResolvePhase("");
+        onClose();
+      }
+    } catch (e) {
+      if (mountedRef.current) {
+        const msg = e instanceof Error ? e.message : typeof e === "string" ? e : "Failed to resolve .torrent file";
+        setError(msg);
+        setResolving(false);
+        setResolvePhase("");
+      }
+    }
   };
 
   const handleClose = () => {
+    if (resolving) {
+      invoke("cancel_torrent_resolve").catch(() => {});
+    }
     setMode("pick");
     setMagnetInput("");
     setError("");
+    setResolving(false);
+    setResolvePhase("");
     onClose();
   };
 
@@ -79,8 +160,7 @@ export default function ImportDialog({
         >
           <div className="absolute inset-0 bg-black/60" />
           <motion.div
-            className="relative bg-[#111] border border-white/10 rounded-2xl shadow-2xl
-                       w-[380px] p-5"
+            className="relative bg-[#111] rounded-2xl shadow-2xl w-[380px] p-5"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.92, y: -8 }}
@@ -104,7 +184,7 @@ export default function ImportDialog({
                 <button
                   onClick={() => void handleLocalFile()}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-lg
-                             border border-white/10 bg-white/[0.03] hover:bg-white/[0.08]
+                              bg-white/[0.03] hover:bg-white/[0.08]
                              cursor-pointer transition-colors duration-100"
                 >
                   <FolderOpen className="w-5 h-5 text-white/50" />
@@ -118,7 +198,7 @@ export default function ImportDialog({
                 <button
                   onClick={() => setMode("torrent")}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-lg
-                             border border-white/10 bg-white/[0.03] hover:bg-white/[0.08]
+                              bg-white/[0.03] hover:bg-white/[0.08]
                              cursor-pointer transition-colors duration-100"
                 >
                   <Magnet className="w-5 h-5 text-white/50" />
@@ -142,36 +222,56 @@ export default function ImportDialog({
                   }}
                   onKeyDown={(e) => e.key === "Enter" && handleTorrentSubmit()}
                   autoFocus
-                  className={`w-full bg-white/8 border rounded-lg px-3 py-2 text-sm text-white
+                  className={`w-full bg-white/8 rounded-lg px-3 py-2 text-sm text-white
                              placeholder:text-white/25 outline-none focus:ring-1
                              transition-colors duration-100 ${
                                error
-                                 ? "border-red-500/60 focus:ring-red-500/40"
-                                 : "border-white/10 focus:border-white/30 focus:ring-white/20"
+                                 ? "ring-1 ring-red-500/60 focus:ring-red-500/40"
+                                 : "focus:ring-white/20"
                              }`}
                 />
+                <button
+                  onClick={() => void handleTorrentFile()}
+                  disabled={resolving}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg
+                             bg-white/[0.03] hover:bg-white/[0.08]
+                             cursor-pointer transition-colors duration-100
+                             disabled:opacity-40 disabled:cursor-default"
+                >
+                  <FileUp className="w-4 h-4 text-white/50" />
+                  <span className="text-[11px] text-white/60">Open .torrent file</span>
+                </button>
                 {error && (
                   <p className="text-[10px] text-red-400">{error}</p>
                 )}
-                <div className="flex gap-2 justify-end">
+                <div className="flex gap-2 justify-end items-center">
+                  {resolving && (
+                    <span className="text-[10px] text-white/40 mr-auto">
+                      {PHASE_LABELS[resolvePhase] || "Resolving..."}
+                    </span>
+                  )}
                   <button
                     onClick={() => {
                       setMode("pick");
                       setError("");
                     }}
+                    disabled={resolving}
                     className="px-3 py-1.5 text-xs text-white/50 hover:text-white/80
                                rounded-lg hover:bg-white/8 cursor-pointer
-                               transition-colors duration-100"
+                               transition-colors duration-100 disabled:opacity-40"
                   >
                     Back
                   </button>
                   <button
-                    onClick={handleTorrentSubmit}
+                    onClick={() => void handleTorrentSubmit()}
+                    disabled={resolving}
                     className="px-4 py-1.5 text-xs font-medium text-black bg-white
                                rounded-lg hover:bg-white/90 active:scale-95
-                               transition-all duration-100 cursor-pointer"
+                               transition-all duration-100 cursor-pointer
+                               disabled:opacity-60 flex items-center gap-1.5"
                   >
-                    Add
+                    {resolving && <Loader2 className="w-3 h-3 animate-spin" />}
+                    {resolving ? "Resolving" : "Add"}
                   </button>
                 </div>
               </div>

@@ -133,7 +133,7 @@ export default function DevTester() {
         {open && (
           <motion.div
             className="fixed top-14 right-3 z-[100] w-96 max-h-[70vh]
-                       bg-[#101010]/95 backdrop-blur-xl border border-white/10
+                       bg-[#101010]/95 backdrop-blur-xl 
                        rounded-xl shadow-2xl overflow-hidden flex flex-col"
             initial={{ opacity: 0, x: 12 }}
             animate={{ opacity: 1, x: 0 }}

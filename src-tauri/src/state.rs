@@ -51,7 +51,7 @@ impl AgcController {
 /// own enum copy. shader_dir is set once at startup from the Tauri resource
 /// dir and read by perf::apply_upscaling.
 pub struct PerfController {
-    pub profile: Mutex<String>,        // serialized PerfProfile
+    pub profile: Mutex<String>, // serialized PerfProfile
     pub on_battery: AtomicBool,
     pub shader_dir: Mutex<Option<PathBuf>>,
 }
@@ -67,8 +67,12 @@ impl PerfController {
 
     pub fn set_shader_dir(&self, dir: PathBuf) {
         match self.shader_dir.lock() {
-            Ok(mut g) => { *g = Some(dir); }
-            Err(e) => { eprintln!("[state] shader_dir lock poisoned: {e}"); }
+            Ok(mut g) => {
+                *g = Some(dir);
+            }
+            Err(e) => {
+                eprintln!("[state] shader_dir lock poisoned: {e}");
+            }
         }
     }
 
@@ -114,7 +118,9 @@ pub struct PipMemory {
 
 impl PipMemory {
     pub fn new() -> Self {
-        Self { saved: Mutex::new(None) }
+        Self {
+            saved: Mutex::new(None),
+        }
     }
 }
 
@@ -205,6 +211,9 @@ pub struct AppState {
     /// Max torrent cache size in bytes (0 = no limit). Eviction runs after
     /// sources are dropped. Set by the frontend via `set_torrent_cache_limit`.
     pub cache_limit_bytes: std::sync::atomic::AtomicU64,
+    /// Torrent ID currently being resolved in `resolve_torrent_files`.
+    /// Set after `add_magnet` returns so `cancel_torrent_resolve` can forget it.
+    pub resolving_torrent_id: Mutex<Option<u32>>,
 }
 
 impl AppState {
@@ -225,6 +234,7 @@ impl AppState {
             active_archive_path: Arc::new(Mutex::new(None)),
             stats_poller_started: AtomicBool::new(false),
             cache_limit_bytes: std::sync::atomic::AtomicU64::new(0),
+            resolving_torrent_id: Mutex::new(None),
         }
     }
 }

@@ -88,7 +88,7 @@ export default function OpenSourceDialog({ open, onSubmit, onClose }: Props) {
           onClick={onClose}
         >
           <motion.div
-            className="bg-[#111]/95 backdrop-blur-xl border border-white/10 rounded-2xl
+            className="bg-[#111]/95 backdrop-blur-xl  rounded-2xl
                        shadow-2xl p-5 w-[460px] max-w-[92vw] flex flex-col gap-4"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}
@@ -152,7 +152,7 @@ export default function OpenSourceDialog({ open, onSubmit, onClose }: Props) {
                   onClick={() => void submit(true)}
                   disabled={busy}
                   className="px-3 py-1.5 text-xs font-medium text-white/85
-                             border border-white/20 hover:border-white/35 hover:bg-white/8
+                              hover:border-white/35 hover:bg-white/8
                              rounded-lg transition-all duration-100 cursor-pointer
                              disabled:opacity-40 disabled:cursor-not-allowed"
                 >

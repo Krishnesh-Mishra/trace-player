@@ -33,8 +33,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
     GetSystemMetrics, KillTimer, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassW,
     SetTimer, ShowWindow, TranslateMessage, HMENU, IDC_ARROW, MSG, SM_CXSCREEN, SM_CYSCREEN,
-    SW_SHOW, WM_CLOSE, WM_DESTROY, WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    SW_SHOW, WM_CLOSE, WM_DESTROY, WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_POPUP, WS_VISIBLE,
 };
 
 const CLASS_NAME: PCWSTR = w!("TracePlayerSplash");
@@ -68,12 +68,7 @@ impl Drop for SplashHandle {
     fn drop(&mut self) {
         if self.hwnd != 0 {
             unsafe {
-                let _ = PostMessageW(
-                    HWND(self.hwnd as *mut _),
-                    WM_CLOSE,
-                    WPARAM(0),
-                    LPARAM(0),
-                );
+                let _ = PostMessageW(HWND(self.hwnd as *mut _), WM_CLOSE, WPARAM(0), LPARAM(0));
             }
             self.hwnd = 0;
         }

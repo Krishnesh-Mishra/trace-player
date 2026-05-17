@@ -28,4 +28,4 @@ dist-ssr
 src-tauri/target/
 src-tauri/Cargo.lock.bak
 
-.claude/settings.local.json 
+.claude/

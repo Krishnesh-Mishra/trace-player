@@ -9,7 +9,7 @@ export default function ColorPicker({ value, onChange }: Props) {
     <div className="flex items-center gap-2">
       <label
         className="relative w-7 h-7 rounded-md overflow-hidden
-                   border border-white/20 cursor-pointer block"
+                    cursor-pointer block"
       >
         <input
           type="color"

@@ -259,14 +259,14 @@ export default function Timeline({
               <img
                 src={denseSrc}
                 alt=""
-                className="rounded-md overflow-hidden border border-white/15 shadow-xl bg-black/60 block"
+                className="rounded-md overflow-hidden  shadow-xl bg-black/60 block"
                 style={{ width: tileW, height: tileH }}
                 draggable={false}
               />
             ) : (
               showThumbnails && thumbStyle && (
                 <div
-                  className="rounded-md overflow-hidden border border-white/15 shadow-xl bg-black/60"
+                  className="rounded-md overflow-hidden  shadow-xl bg-black/60"
                   style={thumbStyle}
                 />
               )
@@ -274,7 +274,7 @@ export default function Timeline({
             <div
               className="px-1.5 py-0.5 text-[10px] tabular-nums
                          bg-black/85 text-white rounded shadow-lg
-                         border border-white/10"
+                         "
             >
               {fmtTime(tooltipTime)}
             </div>

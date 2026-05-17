@@ -32,7 +32,7 @@ export default function DelaySection({ delayMs, onChange }: Props) {
       <div className="flex items-center gap-1.5 pt-1">
         <motion.button
           className="flex-1 px-2 py-1.5 text-[11px] text-white/80
-                     rounded-md border border-white/10 bg-white/[0.03] cursor-pointer
+                     rounded-md  bg-white/[0.03] cursor-pointer
                      hover:bg-white/10 transition-colors duration-100"
           whileTap={{ scale: 0.96 }}
           onClick={() => onChange(Math.max(-5000, delayMs - 100))}
@@ -41,7 +41,7 @@ export default function DelaySection({ delayMs, onChange }: Props) {
         </motion.button>
         <motion.button
           className="flex items-center justify-center w-9 h-7 cursor-pointer
-                     rounded-md border border-white/10 bg-white/[0.03]
+                     rounded-md  bg-white/[0.03]
                      hover:bg-white/10 transition-colors duration-100"
           whileTap={{ scale: 0.92 }}
           onClick={() => onChange(0)}
@@ -51,7 +51,7 @@ export default function DelaySection({ delayMs, onChange }: Props) {
         </motion.button>
         <motion.button
           className="flex-1 px-2 py-1.5 text-[11px] text-white/80
-                     rounded-md border border-white/10 bg-white/[0.03] cursor-pointer
+                     rounded-md  bg-white/[0.03] cursor-pointer
                      hover:bg-white/10 transition-colors duration-100"
           whileTap={{ scale: 0.96 }}
           onClick={() => onChange(Math.min(5000, delayMs + 100))}

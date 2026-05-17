@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Search, Film, Play } from "lucide-react";
 import { motion } from "framer-motion";
@@ -20,6 +20,54 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
   const [results, setResults] = useState<ExploreVideo[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [autoResults, setAutoResults] = useState<ExploreVideo[]>([]);
+  const [autoLoading, setAutoLoading] = useState(true);
+  const [thumbCache, setThumbCache] = useState<Map<string, string>>(new Map());
+  const thumbQueueRef = useRef<string[]>([]);
+  const thumbActiveRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    invoke<ExploreVideo[]>("scan_common_folders")
+      .then(setAutoResults)
+      .catch(() => {})
+      .finally(() => setAutoLoading(false));
+  }, []);
+
+  const processThumbQueue = useCallback(async () => {
+    if (thumbActiveRef.current) return;
+    thumbActiveRef.current = true;
+    while (thumbQueueRef.current.length > 0 && mountedRef.current) {
+      const path = thumbQueueRef.current.shift()!;
+      try {
+        const thumbPath = await invoke<string>("generate_library_thumb", { path });
+        const b64 = await invoke<string>("read_thumb_base64", { path: thumbPath });
+        if (mountedRef.current) {
+          setThumbCache((prev) => {
+            const next = new Map(prev);
+            next.set(path, `data:image/jpeg;base64,${b64}`);
+            return next;
+          });
+        }
+      } catch {}
+    }
+    thumbActiveRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    const videos = searched ? results : autoResults;
+    const newPaths = videos
+      .filter((v) => !thumbCache.has(v.path))
+      .map((v) => v.path);
+    if (newPaths.length === 0) return;
+    thumbQueueRef.current = newPaths;
+    void processThumbQueue();
+  }, [autoResults, results, searched, processThumbQueue, thumbCache]);
 
   const handleSearch = useCallback(async () => {
     if (!query.trim()) return;
@@ -37,9 +85,12 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
     }
   }, [query]);
 
+  const displayResults = searched ? results : autoResults;
+  const isLoading = searched ? loading : autoLoading;
+
   return (
     <div className="flex-1 flex flex-col min-w-0">
-      <div className="px-4 py-3 border-b border-white/8">
+      <div className="px-4 py-3 bg-black/20">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
@@ -48,10 +99,10 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void handleSearch()}
-              placeholder="Enter a folder path to scan for videos (e.g. D:\Videos)"
-              className="w-full bg-white/5 border border-white/8 rounded-lg pl-10 pr-3 py-2
+              placeholder="Search a folder path or browse videos below..."
+              className="w-full bg-white/5 rounded-lg pl-10 pr-3 py-2
                          text-xs text-white placeholder:text-white/25 outline-none
-                         focus:border-white/20 transition-colors duration-100"
+                         transition-colors duration-100"
             />
           </div>
           <button
@@ -66,25 +117,25 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-3">
-        {loading && (
+        {isLoading && (
           <div className="flex items-center justify-center py-12">
             <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
           </div>
         )}
 
-        {!loading && !searched && (
+        {!isLoading && displayResults.length === 0 && !searched && (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <Search className="w-10 h-10 text-white/15 mb-3" />
             <p className="text-sm text-white/30">
-              Enter a folder path to discover video files
+              No video files found on this PC
             </p>
             <p className="text-[10px] text-white/20 mt-1">
-              Scans the directory for video files
+              Try scanning a specific folder above
             </p>
           </div>
         )}
 
-        {!loading && searched && results.length === 0 && (
+        {!isLoading && searched && results.length === 0 && (
           <div className="flex items-center justify-center py-12">
             <p className="text-sm text-white/30">
               No video files found in that location
@@ -92,38 +143,53 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
           </div>
         )}
 
-        {!loading && results.length > 0 && (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3">
-            {results.map((video) => (
-              <motion.div
-                key={video.path}
-                className="group cursor-pointer"
-                whileTap={{ scale: 0.97 }}
-                onClick={() => onPlayFile(video.path)}
-              >
-                <div className="relative aspect-video rounded-lg overflow-hidden bg-white/5">
-                  <div className="w-full h-full flex items-center justify-center">
-                    <Film className="w-8 h-8 text-white/15" />
-                  </div>
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40
-                                  transition-colors duration-150 flex items-center justify-center">
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                      <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm
-                                      flex items-center justify-center">
-                        <Play className="w-5 h-5 text-white fill-white" />
+        {!isLoading && displayResults.length > 0 && (
+          <>
+            {!searched && (
+              <p className="text-[10px] text-white/30 uppercase tracking-wider mb-3">
+                Videos on this PC
+              </p>
+            )}
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3">
+              {displayResults.map((video) => (
+                <motion.div
+                  key={video.path}
+                  className="group cursor-pointer"
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => onPlayFile(video.path)}
+                >
+                  <div className="relative aspect-video rounded-lg overflow-hidden bg-white/5">
+                    {thumbCache.has(video.path) ? (
+                      <img
+                        src={thumbCache.get(video.path)}
+                        alt={video.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <Film className="w-8 h-8 text-white/15" />
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40
+                                    transition-colors duration-150 flex items-center justify-center">
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                        <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm
+                                        flex items-center justify-center">
+                          <Play className="w-5 h-5 text-white fill-white" />
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-                <div className="mt-1.5 px-0.5">
-                  <p className="text-xs text-white/80 truncate">{video.name}</p>
-                  <p className="text-[10px] text-white/40 mt-0.5">
-                    {fmtSize(video.size)}
-                  </p>
-                </div>
-              </motion.div>
-            ))}
-          </div>
+                  <div className="mt-1.5 px-0.5">
+                    <p className="text-xs text-white/80 truncate">{video.name}</p>
+                    <p className="text-[10px] text-white/40 mt-0.5">
+                      {fmtSize(video.size)}
+                    </p>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </>
         )}
       </div>
     </div>

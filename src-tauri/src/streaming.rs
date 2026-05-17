@@ -34,6 +34,10 @@ struct TorrentAddResp {
 #[derive(Deserialize, Default)]
 struct TorrentDetails {
     #[serde(default)]
+    info_hash: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
     files: Vec<TorrentFile>,
 }
 
@@ -63,6 +67,8 @@ pub struct VideoFile {
 /// so the user's playlist order is stable across runs of the same torrent.
 pub struct AddedTorrent {
     pub id: u32,
+    pub info_hash: String,
+    pub name: String,
     pub videos: Vec<VideoFile>,
 }
 
@@ -77,7 +83,7 @@ pub struct AddedTorrent {
 #[serde(rename_all = "camelCase")]
 pub struct TorrentStats {
     pub torrent_id: u32,
-    pub state: String,                          // "initializing" | "live" | "paused" | "error"
+    pub state: String, // "initializing" | "live" | "paused" | "error"
     pub progress_bytes: u64,
     pub total_bytes: u64,
     pub download_speed_bps: f64,
@@ -107,11 +113,7 @@ impl StreamingSession {
     /// the initial-checksum phase; we pluck the percentage out and ship it
     /// so the loading overlay shows real progress instead of an
     /// indeterminate spinner.
-    pub fn start(
-        rqbit_exe: &Path,
-        session_dir: &Path,
-        app: AppHandle,
-    ) -> Result<Self, String> {
+    pub fn start(rqbit_exe: &Path, session_dir: &Path, app: AppHandle) -> Result<Self, String> {
         if !rqbit_exe.is_file() {
             return Err(format!(
                 "rqbit.exe not found at {} — installer should place it in bin/",
@@ -152,9 +154,7 @@ impl StreamingSession {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("spawn rqbit.exe: {e}"))?;
+        let mut child = cmd.spawn().map_err(|e| format!("spawn rqbit.exe: {e}"))?;
 
         let stdout = child
             .stdout
@@ -212,8 +212,7 @@ impl StreamingSession {
                     let bucket = (pct * 100.0) as u8;
                     if last_pct != Some(bucket) {
                         last_pct = Some(bucket);
-                        let _ = app_for_drain
-                            .emit("mpv:rqbit-init-progress", pct);
+                        let _ = app_for_drain.emit("mpv:rqbit-init-progress", pct);
                     }
                 }
                 crate::np_debug!("rqbit", "{line}");
@@ -235,6 +234,10 @@ impl StreamingSession {
             base_url: format!("http://127.0.0.1:{port}"),
             http,
         })
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 
     pub fn add_magnet(&self, uri: &str) -> Result<AddedTorrent, String> {
@@ -281,8 +284,8 @@ impl StreamingSession {
                 }
             }
         }
-        let resp = resp_opt
-            .ok_or_else(|| format!("rqbit POST /torrents (after retries): {last_err}"))?;
+        let resp =
+            resp_opt.ok_or_else(|| format!("rqbit POST /torrents (after retries): {last_err}"))?;
 
         let body_str = resp
             .into_string()
@@ -339,14 +342,17 @@ impl StreamingSession {
                     idx,
                     name: f.name.clone(),
                     length: f.length,
-                    stream_url: format!(
-                        "{}/torrents/{}/stream/{}",
-                        self.base_url, parsed.id, idx
-                    ),
+                    stream_url: format!("{}/torrents/{}/stream/{}", self.base_url, parsed.id, idx),
                 }
             })
             .collect();
-        Ok(AddedTorrent { id: parsed.id, videos })
+        let torrent_name = parsed.details.name.unwrap_or_else(|| format!("Torrent #{}", parsed.id));
+        Ok(AddedTorrent {
+            id: parsed.id,
+            info_hash: parsed.details.info_hash,
+            name: torrent_name,
+            videos,
+        })
     }
 
     /// Mark exactly the listed file indices as "wanted" (rqbit's `included=true`).
@@ -423,8 +429,8 @@ impl StreamingSession {
         let body = resp
             .into_string()
             .map_err(|e| format!("rqbit stats body: {e}"))?;
-        let v: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| format!("rqbit stats json: {e}"))?;
+        let v: serde_json::Value =
+            serde_json::from_str(&body).map_err(|e| format!("rqbit stats json: {e}"))?;
 
         // Helpers — `or_else_ptr` walks an alternate JSON pointer when the
         // primary one isn't present. rqbit's snapshot key has lived under
@@ -459,10 +465,7 @@ impl StreamingSession {
             "/live/snapshot/downloaded_and_checked_bytes",
             "/progress_bytes",
         ]);
-        let total_bytes = u64_at(&[
-            "/snapshot/total_bytes",
-            "/total_bytes",
-        ]);
+        let total_bytes = u64_at(&["/snapshot/total_bytes", "/total_bytes"]);
         // rqbit reports speed in mbps (megabits) on some builds and as a
         // bytes-per-second number on others; normalize to bytes/sec by
         // probing both shapes.
@@ -483,7 +486,8 @@ impl StreamingSession {
             }
         };
         let peers_live = u64_at(&["/live/snapshot/peer_stats/live", "/live/peers/live"]) as u32;
-        let peers_queued = u64_at(&["/live/snapshot/peer_stats/queued", "/live/peers/queued"]) as u32;
+        let peers_queued =
+            u64_at(&["/live/snapshot/peer_stats/queued", "/live/peers/queued"]) as u32;
         let peers_seen = u64_at(&["/live/snapshot/peer_stats/seen", "/live/peers/seen"]) as u32;
         let eta_seconds = v
             .pointer("/time_remaining/duration/secs")
@@ -525,6 +529,24 @@ impl StreamingSession {
             .send_string("")
             .map_err(|e| format!("rqbit POST forget: {e}"))?;
         crate::np_debug!("rqbit", "torrent {id} forgotten");
+        Ok(())
+    }
+
+    pub fn pause_torrent(&self, id: u32) -> Result<(), String> {
+        let url = format!("{}/torrents/{}/pause", self.base_url, id);
+        self.http
+            .post(&url)
+            .send_string("")
+            .map_err(|e| format!("rqbit POST pause: {e}"))?;
+        Ok(())
+    }
+
+    pub fn resume_torrent(&self, id: u32) -> Result<(), String> {
+        let url = format!("{}/torrents/{}/start", self.base_url, id);
+        self.http
+            .post(&url)
+            .send_string("")
+            .map_err(|e| format!("rqbit POST start: {e}"))?;
         Ok(())
     }
 }
@@ -673,7 +695,9 @@ pub fn run_cache_eviction(limit_bytes: u64) {
     let mut total: u64 = 0;
     for entry in read.flatten() {
         let path = entry.path();
-        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
         let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
         let size = if meta.is_dir() {
             dir_size_recursive(&path)
@@ -691,7 +715,11 @@ pub fn run_cache_eviction(limit_bytes: u64) {
         if total <= limit_bytes {
             break;
         }
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_string();
         let removed = if path.is_dir() {
             std::fs::remove_dir_all(path).is_ok()
         } else {
@@ -702,11 +730,17 @@ pub fn run_cache_eviction(limit_bytes: u64) {
             crate::np_info!("cache", "evicted {} ({} MiB freed)", name, size / 1_048_576);
         }
     }
-    crate::np_info!("cache", "after eviction: {} MiB in session dir", total / 1_048_576);
+    crate::np_info!(
+        "cache",
+        "after eviction: {} MiB in session dir",
+        total / 1_048_576
+    );
 }
 
 fn dir_size_recursive(dir: &Path) -> u64 {
-    let Ok(read) = std::fs::read_dir(dir) else { return 0 };
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return 0;
+    };
     read.flatten()
         .map(|e| {
             let p = e.path();

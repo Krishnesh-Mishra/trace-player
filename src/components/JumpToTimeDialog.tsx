@@ -59,7 +59,7 @@ export default function JumpToTimeDialog({ open, duration, onSeek, onClose }: Pr
           onClick={onClose}
         >
           <motion.div
-            className="bg-[#111]/90 backdrop-blur-xl border border-white/10 rounded-2xl
+            className="bg-[#111]/90 backdrop-blur-xl  rounded-2xl
                        shadow-2xl p-5 w-72 flex flex-col gap-4"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}

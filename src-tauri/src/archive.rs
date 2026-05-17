@@ -28,8 +28,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sha1::{Digest, Sha1};
 
 const VIDEO_EXTS: &[&str] = &[
-    "mp4", "mkv", "avi", "mov", "webm", "m4v", "ts", "flv", "wmv", "mpg", "mpeg", "ogv",
-    "3gp", "m2ts", "mts",
+    "mp4", "mkv", "avi", "mov", "webm", "m4v", "ts", "flv", "wmv", "mpg", "mpeg", "ogv", "3gp",
+    "m2ts", "mts",
 ];
 
 /// 4 GiB. Tuned later via settings; for v1 a static cap keeps the LRU
@@ -68,7 +68,6 @@ pub struct ArchiveHandle {
     /// playback and mid-stream-delete the file mpv is reading.
     pub active_paths: Arc<Mutex<std::collections::HashSet<PathBuf>>>,
 }
-
 
 /// Format detection: extension match. zip-bombs disguised as `.mp4` are out
 /// of scope — the user is explicitly opening this as an archive.
@@ -202,13 +201,15 @@ fn open_archive_inner(path: &Path) -> Result<ArchiveHandle, String> {
 /// present. Idempotent — second call is a stat() then return. Records
 /// last-access by touching the file.
 pub fn ensure_entry(handle: &ArchiveHandle, idx: usize) -> Result<PathBuf, String> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ensure_entry_inner(handle, idx)))
-        .unwrap_or_else(|_| {
-            Err(format!(
-                "archive entry {idx} could not be extracted (the parser panicked — the \
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ensure_entry_inner(handle, idx)
+    }))
+    .unwrap_or_else(|_| {
+        Err(format!(
+            "archive entry {idx} could not be extracted (the parser panicked — the \
                  archive is likely corrupted or truncated)."
-            ))
-        })
+        ))
+    })
 }
 
 fn ensure_entry_inner(handle: &ArchiveHandle, idx: usize) -> Result<PathBuf, String> {
@@ -255,7 +256,9 @@ fn ensure_entry_inner(handle: &ArchiveHandle, idx: usize) -> Result<PathBuf, Str
         // by_index. For 7z/rar we have to match by name since neither
         // crate exposes a stable random-access by index API.
         ArchiveBackend::Zip => extract_zip_entry(&handle.source_path, entry.idx, &dest)?,
-        ArchiveBackend::SevenZ => extract_sevenz_entry(&handle.source_path, &entry.rel_path, &dest)?,
+        ArchiveBackend::SevenZ => {
+            extract_sevenz_entry(&handle.source_path, &entry.rel_path, &dest)?
+        }
         ArchiveBackend::Rar => extract_rar_entry(&handle.source_path, &entry.rel_path, &dest)?,
     }
     // Eviction sweep: best-effort. Always after a successful extract so a
@@ -346,7 +349,11 @@ fn list_zip_entries(path: &Path) -> Result<Vec<ArchiveEntry>, String> {
         if !is_video_ext(&rel) {
             continue;
         }
-        out.push(ArchiveEntry { idx: i, rel_path: rel, size: f.size() });
+        out.push(ArchiveEntry {
+            idx: i,
+            rel_path: rel,
+            size: f.size(),
+        });
     }
     out.sort_by(|a, b| {
         a.rel_path
@@ -515,9 +522,7 @@ fn extract_rar_entry(source: &Path, rel_path: &Path, dest: &Path) -> Result<(), 
             fs::rename(&tmp, dest).map_err(|e| format!("rename tmp: {e}"))?;
             return Ok(());
         }
-        archive = header
-            .skip()
-            .map_err(|e| format!("rar skip: {e}"))?;
+        archive = header.skip().map_err(|e| format!("rar skip: {e}"))?;
     }
     Err(format!("rar entry not found: {target}"))
 }
@@ -538,8 +543,7 @@ impl ArchiveRegistry {
         Self::default()
     }
     pub fn register(&mut self, handle: Arc<ArchiveHandle>) {
-        self.by_cache_dir
-            .insert(handle.cache_dir.clone(), handle);
+        self.by_cache_dir.insert(handle.cache_dir.clone(), handle);
     }
     /// Look up the archive whose cache_dir contains `path`.
     pub fn lookup_by_path(&self, path: &Path) -> Option<Arc<ArchiveHandle>> {

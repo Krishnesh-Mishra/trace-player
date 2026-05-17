@@ -160,7 +160,7 @@ export default function SettingsMenu(props: Props) {
       {open && (
         <motion.div
           ref={menuRef}
-          className={"absolute z-50 w-60 bg-[#111]/85 backdrop-blur-xl rounded-xl border border-white/10 shadow-2xl overflow-hidden " + (!isFullBar ? " bottom-18 -right-4" : " -bottom-2 left-12")}
+          className={"absolute z-50 w-60 bg-[#111]/85 backdrop-blur-xl rounded-xl  shadow-2xl overflow-hidden " + (!isFullBar ? " bottom-18 -right-4" : " -bottom-2 left-12")}
           initial={{ opacity: 0, scale: 0.88, y: 6, transformOrigin: !isFullBar ? "bottom right" : "bottom left" }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.88, y: 6 }}

@@ -31,7 +31,7 @@ export default function TorrentActionDialog({
         >
           <div className="absolute inset-0 bg-black/60" />
           <motion.div
-            className="relative bg-[#111] border border-white/10 rounded-2xl shadow-2xl
+            className="relative bg-[#111]  rounded-2xl shadow-2xl
                        w-[340px] p-5"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}
@@ -64,7 +64,7 @@ export default function TorrentActionDialog({
                   onClose();
                 }}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-lg
-                           border border-white/10 bg-white/[0.03] hover:bg-white/[0.08]
+                            bg-white/[0.03] hover:bg-white/[0.08]
                            cursor-pointer transition-colors duration-100"
               >
                 <Play className="w-5 h-5 text-white/50" />
@@ -81,7 +81,7 @@ export default function TorrentActionDialog({
                   onClose();
                 }}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-lg
-                           border border-white/10 bg-white/[0.03] hover:bg-white/[0.08]
+                            bg-white/[0.03] hover:bg-white/[0.08]
                            cursor-pointer transition-colors duration-100"
               >
                 <Download className="w-5 h-5 text-white/50" />
