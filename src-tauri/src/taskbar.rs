@@ -61,6 +61,12 @@ pub struct TaskbarToolbar {
     is_playing: Mutex<bool>,
 }
 
+// SAFETY: TaskbarToolbar is created on the main thread (its window subclass
+// must run on the window's message-pump thread) and its Arc is shared with
+// the worker thread for set_playing calls. ITaskbarList3 is effectively
+// free-threaded in the Windows shell — ThumbBarUpdateButtons marshals
+// correctly when called cross-apartment. The HWND and HICON fields are
+// plain handles safe to share across threads.
 unsafe impl Send for TaskbarToolbar {}
 unsafe impl Sync for TaskbarToolbar {}
 

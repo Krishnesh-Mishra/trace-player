@@ -1,9 +1,11 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import React from "react";
 import { motion } from "framer-motion";
 import { Play, Pause, Maximize2, X } from "lucide-react";
 
 interface Props {
   isPlaying: boolean;
-  progress: number; // 0..100
+  progressRef: React.RefObject<number>; // 0..100
   onPlayPause: () => void;
   onExitPip: () => void;
   onSeekCommit: (pct: number) => void;
@@ -12,11 +14,57 @@ interface Props {
 /** Minimal control strip shown at the bottom of the window in PiP mode. */
 export default function PipBar({
   isPlaying,
-  progress,
+  progressRef,
   onPlayPause,
   onExitPip,
   onSeekCommit,
 }: Props) {
+  const fillRef = useRef<HTMLDivElement>(null);
+  const [localPct, setLocalPct] = useState<number | null>(null);
+  const draggingRef = useRef(false);
+
+  // Sync the fill bar from the ref at ~60fps when not dragging.
+  useEffect(() => {
+    let active = true;
+    const tick = () => {
+      if (!active) return;
+      if (!draggingRef.current && fillRef.current) {
+        fillRef.current.style.width = `${progressRef.current}%`;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    return () => { active = false; };
+  }, [progressRef]);
+
+  const getPct = useCallback((e: React.PointerEvent) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+  }, []);
+
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    draggingRef.current = true;
+    const pct = getPct(e);
+    setLocalPct(pct);
+    if (fillRef.current) fillRef.current.style.width = `${pct}%`;
+  }, [getPct]);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!(e.buttons & 1)) return;
+    const pct = getPct(e);
+    setLocalPct(pct);
+    if (fillRef.current) fillRef.current.style.width = `${pct}%`;
+  }, [getPct]);
+
+  const handlePointerUp = useCallback((_e: React.PointerEvent) => {
+    if (draggingRef.current && localPct !== null) {
+      onSeekCommit(localPct);
+    }
+    draggingRef.current = false;
+    setLocalPct(null);
+  }, [localPct, onSeekCommit]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
@@ -29,6 +77,7 @@ export default function PipBar({
     >
       <button
         onClick={onPlayPause}
+        aria-label="Play / Pause"
         className="w-7 h-7 rounded-full flex items-center justify-center
                    text-white hover:bg-white/15 transition-colors"
       >
@@ -37,28 +86,20 @@ export default function PipBar({
 
       <div
         className="flex-1 h-1.5 rounded-full bg-white/20 cursor-pointer relative"
-        onPointerDown={(e) => {
-          e.currentTarget.setPointerCapture(e.pointerId);
-          const rect = e.currentTarget.getBoundingClientRect();
-          onSeekCommit(((e.clientX - rect.left) / rect.width) * 100);
-        }}
-        onPointerMove={(e) => {
-          if (e.buttons & 1) {
-            const rect = e.currentTarget.getBoundingClientRect();
-            onSeekCommit(
-              Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100))
-            );
-          }
-        }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
       >
         <div
+          ref={fillRef}
           className="absolute inset-y-0 left-0 rounded-full"
-          style={{ width: `${progress}%`, background: "var(--np-accent, #fff)" }}
+          style={{ width: `${progressRef.current}%`, background: "var(--np-accent, #fff)" }}
         />
       </div>
 
       <button
         onClick={onExitPip}
+        aria-label="Restore"
         title="Restore"
         className="w-7 h-7 rounded-full flex items-center justify-center
                    text-white/80 hover:text-white hover:bg-white/15 transition-colors"
@@ -67,6 +108,7 @@ export default function PipBar({
       </button>
       <button
         onClick={onExitPip}
+        aria-label="Exit Picture in Picture"
         title="Exit PiP"
         className="w-7 h-7 rounded-full flex items-center justify-center
                    text-white/60 hover:text-white hover:bg-white/15 transition-colors"

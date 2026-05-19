@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { fmtTime, denseBucket, DENSE_BUCKET_S } from "../types";
 import type {
@@ -11,7 +12,7 @@ import { SEEK_BAR_HEIGHT_PX } from "../types";
 import { log } from "../../lib/log";
 
 interface Props {
-  progress: number; // 0..100
+  progressRef: React.RefObject<number>; // 0..100, updated at 10Hz
   duration: number; // seconds
   onSeek: (progress: number) => void;
   onSeekCommit: (progress: number) => void;
@@ -47,7 +48,7 @@ const DENSE_NEAREST_TOLERANCE_S = 1.5;
  * sprite atlas has arrived, a frame preview floats above it.
  */
 export default function Timeline({
-  progress,
+  progressRef,
   duration,
   onSeek,
   onSeekCommit,
@@ -60,9 +61,29 @@ export default function Timeline({
   showThumbnails = true,
 }: Props) {
   const trackRef = useRef<HTMLDivElement>(null);
+  const fillRef = useRef<HTMLDivElement>(null);
+  const thumbDotRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [hoverPct, setHoverPct] = useState<number | null>(null);
+
+  // Read progressRef at ~60fps and update DOM directly (no React re-render).
+  const rafRef = useRef<number>(0);
+  useEffect(() => {
+    let active = true;
+    const tick = () => {
+      if (!active) return;
+      const p = progressRef.current;
+      if (fillRef.current) fillRef.current.style.width = `${p}%`;
+      if (thumbDotRef.current) thumbDotRef.current.style.left = `calc(${p}% - 6px)`;
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      active = false;
+      cancelAnimationFrame(rafRef.current);
+    };
+  }, [progressRef]);
 
   // Debounce dense-window requests — fire only when the cursor has been
   // still for HOVER_DEBOUNCE_MS. The backend cancels its previous job on a
@@ -116,6 +137,7 @@ export default function Timeline({
     setDragging(false);
   };
 
+  const progress = progressRef.current;
   const tooltipPct = dragging ? progress : hoverPct ?? 0;
   const tooltipTime = (tooltipPct / 100) * duration;
   const showTooltip = (hovered || dragging) && duration > 0;
@@ -126,54 +148,62 @@ export default function Timeline({
   //
   // Dense tiles arrive sized identically to sprite tiles, so we render them
   // through a plain <img> with the same width/height for visual continuity.
-  let thumbStyle: React.CSSProperties | null = null;
-  let denseSrc: string | null = null;
+  // Gate the expensive nearest-neighbor search on showTooltip — no point
+  // computing thumbnail lookup when the tooltip isn't visible.
   const tileW = thumbnails?.tileWidth ?? 160;
   const tileH = thumbnails?.tileHeight ?? 90;
 
-  if (denseThumbs && denseThumbs.size > 0 && duration > 0) {
-    const exactKey = denseBucket(tooltipTime);
-    const exact = denseThumbs.get(exactKey);
-    if (exact) {
-      denseSrc = exact;
-    } else {
-      // Walk neighboring buckets within tolerance for a near match.
-      let best: { dt: number; src: string } | null = null;
-      const maxSteps = Math.ceil(DENSE_NEAREST_TOLERANCE_S / DENSE_BUCKET_S);
-      for (let step = 1; step <= maxSteps; step++) {
-        const offset = step * DENSE_BUCKET_S;
-        const a = denseThumbs.get(exactKey + offset);
-        if (a) {
-          best = { dt: offset, src: a };
-          break;
-        }
-        const b = denseThumbs.get(exactKey - offset);
-        if (b) {
-          best = { dt: offset, src: b };
-          break;
-        }
-      }
-      if (best) denseSrc = best.src;
-    }
-  }
+  const { thumbStyle, denseSrc } = useMemo(() => {
+    let thumbStyle: React.CSSProperties | null = null;
+    let denseSrc: string | null = null;
+    if (!showTooltip) return { thumbStyle, denseSrc };
 
-  if (!denseSrc && thumbnails && thumbnails.count > 0) {
-    const tileIdx = Math.min(
-      thumbnails.count - 1,
-      Math.max(0, Math.floor((tooltipPct / 100) * thumbnails.count))
-    );
-    if (tileIdx < thumbnails.filled) {
-      const col = tileIdx % thumbnails.cols;
-      const row = Math.floor(tileIdx / thumbnails.cols);
-      thumbStyle = {
-        width: thumbnails.tileWidth,
-        height: thumbnails.tileHeight,
-        backgroundImage: `url(${thumbnails.src})`,
-        backgroundPosition: `-${col * thumbnails.tileWidth}px -${row * thumbnails.tileHeight}px`,
-        backgroundSize: `${thumbnails.cols * thumbnails.tileWidth}px ${thumbnails.rows * thumbnails.tileHeight}px`,
-      };
+    if (denseThumbs && denseThumbs.size > 0 && duration > 0) {
+      const exactKey = denseBucket(tooltipTime);
+      const exact = denseThumbs.get(exactKey);
+      if (exact) {
+        denseSrc = exact;
+      } else {
+        // Walk neighboring buckets within tolerance for a near match.
+        let best: { dt: number; src: string } | null = null;
+        const maxSteps = Math.ceil(DENSE_NEAREST_TOLERANCE_S / DENSE_BUCKET_S);
+        for (let step = 1; step <= maxSteps; step++) {
+          const offset = step * DENSE_BUCKET_S;
+          const a = denseThumbs.get(exactKey + offset);
+          if (a) {
+            best = { dt: offset, src: a };
+            break;
+          }
+          const b = denseThumbs.get(exactKey - offset);
+          if (b) {
+            best = { dt: offset, src: b };
+            break;
+          }
+        }
+        if (best) denseSrc = best.src;
+      }
     }
-  }
+
+    if (!denseSrc && thumbnails && thumbnails.count > 0) {
+      const tileIdx = Math.min(
+        thumbnails.count - 1,
+        Math.max(0, Math.floor((tooltipPct / 100) * thumbnails.count))
+      );
+      if (tileIdx < thumbnails.filled) {
+        const col = tileIdx % thumbnails.cols;
+        const row = Math.floor(tileIdx / thumbnails.cols);
+        thumbStyle = {
+          width: thumbnails.tileWidth,
+          height: thumbnails.tileHeight,
+          backgroundImage: `url(${thumbnails.src})`,
+          backgroundPosition: `-${col * thumbnails.tileWidth}px -${row * thumbnails.tileHeight}px`,
+          backgroundSize: `${thumbnails.cols * thumbnails.tileWidth}px ${thumbnails.rows * thumbnails.tileHeight}px`,
+        };
+      }
+    }
+
+    return { thumbStyle, denseSrc };
+  }, [showTooltip, tooltipPct, tooltipTime, duration, denseThumbs, thumbnails]);
 
   const trackHeight = SEEK_BAR_HEIGHT_PX[size];
   // Markers within the first ~1% of duration are intro-bumpers, not real
@@ -201,6 +231,7 @@ export default function Timeline({
         style={{ height: trackHeight }}
       >
         <div
+          ref={fillRef}
           className="absolute inset-y-0 left-0 rounded-full"
           style={{
             width: `${progress}%`,
@@ -227,6 +258,7 @@ export default function Timeline({
       <AnimatePresence>
         {(hovered || dragging) && (
           <motion.div
+            ref={thumbDotRef}
             key="thumb"
             className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full shadow-md pointer-events-none"
             style={{

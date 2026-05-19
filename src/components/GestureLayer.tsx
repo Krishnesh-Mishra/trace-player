@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 type Pointer = { id: number; x: number; y: number; t: number };
@@ -29,6 +29,9 @@ const TAP_MS = 250;
 const DOUBLE_TAP_MS = 280;
 const MOVE_THRESHOLD_PX = 8;
 const DECIDE_MS = 80;
+
+/** Euclidean distance between two pointer positions. Module-level — no closure deps. */
+const dist = (a: Pointer, b: Pointer) => Math.hypot(a.x - b.x, a.y - b.y);
 
 /**
  * Pointer-event gesture layer for touch / pen / mouse. Mounts as the click
@@ -81,11 +84,7 @@ export default function GestureLayer({
     return () => clearTimeout(t);
   }, [overlay]);
 
-  if (!enabled) return null;
-
-  const dist = (a: Pointer, b: Pointer) => Math.hypot(a.x - b.x, a.y - b.y);
-
-  const onPointerDown = (e: React.PointerEvent) => {
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
     if (e.button !== 0) return;
     elRef.current?.setPointerCapture(e.pointerId);
     const p: Pointer = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now() };
@@ -101,9 +100,9 @@ export default function GestureLayer({
         baseZoom: zoom,
       };
     }
-  };
+  }, [zoom]);
 
-  const onPointerMove = (e: React.PointerEvent) => {
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
     const p = pointers.current.get(e.pointerId);
     if (!p) return;
     p.x = e.clientX;
@@ -188,9 +187,9 @@ export default function GestureLayer({
       });
       return;
     }
-  };
+  }, [volume, brightness, duration, onZoomChange, onVolumeChange, onBrightnessChange, onSeekAbsolutePct]);
 
-  const onPointerUp = (e: React.PointerEvent) => {
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
     const p = pointers.current.get(e.pointerId);
     pointers.current.delete(e.pointerId);
 
@@ -251,12 +250,14 @@ export default function GestureLayer({
     if (pointers.current.size === 0) {
       gesture.current = { kind: "idle" };
     }
-  };
+  }, [onPlayPause, onSeekRelative, onDoubleClickFullscreen]);
 
-  const onPointerCancel = (e: React.PointerEvent) => {
+  const onPointerCancel = useCallback((e: React.PointerEvent) => {
     pointers.current.delete(e.pointerId);
     if (pointers.current.size === 0) gesture.current = { kind: "idle" };
-  };
+  }, []);
+
+  if (!enabled) return null;
 
   return (
     <div

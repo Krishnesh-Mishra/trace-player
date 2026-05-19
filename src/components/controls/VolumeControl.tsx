@@ -24,10 +24,41 @@ function VolumeSlider({
     return Math.min(100, Math.max(0, ((clientX - rect.left) / rect.width) * 100));
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    let next = value;
+    switch (e.key) {
+      case "ArrowRight":
+      case "ArrowUp":
+        next = Math.min(130, value + 5);
+        break;
+      case "ArrowLeft":
+      case "ArrowDown":
+        next = Math.max(0, value - 5);
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = 130;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    onChange(next);
+  };
+
   return (
     <div
       ref={trackRef}
-      className="relative w-20 h-4 flex items-center cursor-pointer select-none"
+      tabIndex={0}
+      role="slider"
+      aria-valuemin={0}
+      aria-valuemax={130}
+      aria-valuenow={value}
+      aria-label="Volume"
+      className="relative w-20 h-4 flex items-center cursor-pointer select-none outline-none focus-visible:ring-2 focus-visible:ring-[var(--np-accent)] rounded"
+      onKeyDown={handleKeyDown}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
         setDragging(true);

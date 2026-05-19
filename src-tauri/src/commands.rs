@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,6 +15,12 @@ use crate::player::Player;
 use crate::state::{AppState, PipGeometry};
 use crate::streaming::{self, AddedTorrent, StreamingSession};
 use crate::thumbnailer;
+
+/// Simple in-memory cache for torrent metadata (Fix B26). Keyed by magnet URI;
+/// avoids re-downloading metadata when the same magnet is resolved multiple
+/// times (e.g. user opens library modal, cancels, re-opens).
+static TORRENT_META_CACHE: std::sync::LazyLock<Mutex<HashMap<String, Vec<TorrentVideoInfo>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1198,8 +1206,10 @@ fn load_torrent_into_playlist(
     // Block until rqbit is past its initial-checksum phase. Returns Err after
     // 120 s — long enough for even multi-GB torrents. The caller must NOT have
     // called loadfile yet; if we bail here, the previous source is unaffected.
+    // The SessionHandle performs HTTP without holding the streaming mutex.
     let first_idx = added.videos[0].idx;
-    if let Err(e) = ensure_streaming(state, app)?.set_only_files(added.id, &[first_idx]) {
+    let handle = ensure_streaming(state, app)?;
+    if let Err(e) = handle.set_only_files(added.id, &[first_idx]) {
         crate::np_err!("rqbit", "set_only_files initial failed: {e}");
         let _ = app.emit("mpv:source-loading-done", ());
         // Clear the temporary active_torrent pointer we set above.
@@ -1207,13 +1217,7 @@ fn load_torrent_into_playlist(
             *g = None;
         }
         // Forget the new torrent from rqbit so it stops consuming bandwidth.
-        // We only forget added.id here — torrent_ids still holds the OLD
-        // torrents, so the currently-playing torrent stream keeps serving.
-        if let Ok(sess_guard) = state.streaming.lock() {
-            if let Some(sess) = sess_guard.as_ref() {
-                let _ = sess.forget(added.id);
-            }
-        }
+        let _ = handle.forget(added.id);
         return Err(e);
     }
 
@@ -1259,7 +1263,7 @@ fn load_torrent_into_playlist(
     Ok(())
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TorrentVideoInfo {
     pub idx: usize,
@@ -1275,7 +1279,19 @@ pub async fn resolve_torrent_files(
 ) -> Result<Vec<TorrentVideoInfo>, String> {
     app.emit("library:resolve-progress", "connecting").ok();
     crate::np_info!("resolve", "starting resolve for magnet");
-    let added = ensure_streaming(&state, &app)?.add_magnet(&magnet)?;
+
+    // Fix B26: check the torrent metadata cache first.
+    {
+        let cache = TORRENT_META_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(cached) = cache.get(&magnet) {
+            app.emit("library:resolve-progress", "done").ok();
+            crate::np_info!("resolve", "cache hit, {} video(s)", cached.len());
+            return Ok(cached.clone());
+        }
+    }
+
+    let handle = ensure_streaming(&state, &app)?;
+    let added = handle.add_magnet(&magnet)?;
     crate::np_info!("resolve", "add_magnet returned id={}, {} video(s)", added.id, added.videos.len());
     app.emit("library:resolve-progress", "fetching_metadata").ok();
 
@@ -1297,11 +1313,14 @@ pub async fn resolve_torrent_files(
         *g = None;
     }
 
-    if let Ok(guard) = state.streaming.lock() {
-        if let Some(sess) = guard.as_ref() {
-            let _ = sess.forget(added.id);
-        }
+    let _ = handle.forget(added.id);
+
+    // Store in cache for future lookups (Fix B26).
+    {
+        let mut cache = TORRENT_META_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        cache.insert(magnet.clone(), videos.clone());
     }
+
     app.emit("library:resolve-progress", "done").ok();
     crate::np_info!("resolve", "resolve complete, {} video(s) found", videos.len());
     Ok(videos)
@@ -1325,7 +1344,8 @@ pub async fn resolve_torrent_file(
     crate::np_info!("resolve", "reading .torrent file: {}", path);
     let bytes = std::fs::read(&path).map_err(|e| format!("read .torrent: {e}"))?;
 
-    let added = ensure_streaming(&state, &app)?.add_torrent_bytes(&bytes)?;
+    let handle = ensure_streaming(&state, &app)?;
+    let added = handle.add_torrent_bytes(&bytes)?;
     crate::np_info!("resolve", "torrent file added id={}, {} video(s)", added.id, added.videos.len());
     app.emit("library:resolve-progress", "fetching_metadata").ok();
 
@@ -1349,11 +1369,14 @@ pub async fn resolve_torrent_file(
         *g = None;
     }
 
-    if let Ok(stream_guard) = state.streaming.lock() {
-        if let Some(sess) = stream_guard.as_ref() {
-            let _ = sess.forget(added.id);
-        }
+    let _ = handle.forget(added.id);
+
+    // Cache by the derived magnet URI (Fix B26).
+    {
+        let mut cache = TORRENT_META_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        cache.insert(magnet.clone(), videos.clone());
     }
+
     app.emit("library:resolve-progress", "done").ok();
     crate::np_info!("resolve", "torrent file resolve complete, {} video(s)", videos.len());
     Ok(ResolvedTorrent {
@@ -1365,14 +1388,21 @@ pub async fn resolve_torrent_file(
 
 #[tauri::command]
 pub fn cancel_torrent_resolve(state: State<'_, AppState>) -> Result<(), String> {
-    if let Ok(mut g) = state.resolving_torrent_id.lock() {
-        if let Some(id) = g.take() {
-            crate::np_info!("resolve", "cancelling resolve, forgetting torrent {}", id);
-            if let Ok(stream_guard) = state.streaming.lock() {
-                if let Some(sess) = stream_guard.as_ref() {
-                    let _ = sess.forget(id);
-                }
-            }
+    let id_to_forget = state
+        .resolving_torrent_id
+        .lock()
+        .ok()
+        .and_then(|mut g| g.take());
+    if let Some(id) = id_to_forget {
+        crate::np_info!("resolve", "cancelling resolve, forgetting torrent {}", id);
+        // Extract handle then drop the lock before HTTP I/O.
+        let handle = state
+            .streaming
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|s| s.handle()));
+        if let Some(h) = handle {
+            let _ = h.forget(id);
         }
     }
     Ok(())
@@ -1390,14 +1420,17 @@ pub fn list_downloads(state: State<'_, AppState>) -> Result<Vec<crate::streaming
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let guard = state
-        .streaming
-        .lock()
-        .map_err(|e| format!("streaming lock: {e}"))?;
-    let sess = guard.as_ref().ok_or("no streaming session")?;
+    // Clone the handle out of the lock so HTTP GETs run lock-free.
+    let handle = {
+        let guard = state
+            .streaming
+            .lock()
+            .map_err(|e| format!("streaming lock: {e}"))?;
+        guard.as_ref().ok_or("no streaming session")?.handle()
+    };
     let mut results = Vec::new();
     for id in ids {
-        if let Ok(stats) = sess.get_stats(id) {
+        if let Ok(stats) = handle.get_stats(id) {
             results.push(stats);
         }
     }
@@ -1406,22 +1439,37 @@ pub fn list_downloads(state: State<'_, AppState>) -> Result<Vec<crate::streaming
 
 #[tauri::command]
 pub fn pause_download(id: u32, state: State<'_, AppState>) -> Result<(), String> {
-    let guard = state
-        .streaming
-        .lock()
-        .map_err(|e| format!("lock: {e}"))?;
-    let sess = guard.as_ref().ok_or("no streaming session")?;
-    sess.pause_torrent(id)
+    let handle = {
+        let guard = state
+            .streaming
+            .lock()
+            .map_err(|e| format!("lock: {e}"))?;
+        guard.as_ref().ok_or("no streaming session")?.handle()
+    };
+    // HTTP POST runs outside the streaming lock.
+    let url = format!("{}/torrents/{}/pause", handle.base_url, id);
+    handle.http
+        .post(&url)
+        .send_string("")
+        .map_err(|e| format!("rqbit POST pause: {e}"))?;
+    Ok(())
 }
 
 #[tauri::command]
 pub fn resume_download(id: u32, state: State<'_, AppState>) -> Result<(), String> {
-    let guard = state
-        .streaming
-        .lock()
-        .map_err(|e| format!("lock: {e}"))?;
-    let sess = guard.as_ref().ok_or("no streaming session")?;
-    sess.resume_torrent(id)
+    let handle = {
+        let guard = state
+            .streaming
+            .lock()
+            .map_err(|e| format!("lock: {e}"))?;
+        guard.as_ref().ok_or("no streaming session")?.handle()
+    };
+    let url = format!("{}/torrents/{}/start", handle.base_url, id);
+    handle.http
+        .post(&url)
+        .send_string("")
+        .map_err(|e| format!("rqbit POST start: {e}"))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1431,15 +1479,10 @@ pub async fn start_download(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<u32, String> {
-    let added = ensure_streaming(&state, &app)?.add_magnet(&magnet)?;
+    let handle = ensure_streaming(&state, &app)?;
+    let added = handle.add_magnet(&magnet)?;
     if let Some(fi) = file_index {
-        let guard = state
-            .streaming
-            .lock()
-            .map_err(|e| format!("lock: {e}"))?;
-        if let Some(sess) = guard.as_ref() {
-            let _ = sess.set_only_files(added.id, &[fi as usize]);
-        }
+        let _ = handle.set_only_files(added.id, &[fi as usize]);
     }
     if let Ok(mut ids) = state.torrent_ids.lock() {
         ids.insert(added.id);
@@ -1450,49 +1493,62 @@ pub async fn start_download(
 
 #[tauri::command]
 pub fn stop_download(id: u32, state: State<'_, AppState>) -> Result<(), String> {
+    // Extract handle then drop the lock before HTTP I/O.
+    let handle = {
+        let guard = state
+            .streaming
+            .lock()
+            .map_err(|e| format!("lock: {e}"))?;
+        guard.as_ref().map(|s| s.handle())
+    };
     if let Ok(mut ids) = state.torrent_ids.lock() {
         ids.remove(&id);
     }
-    let guard = state
-        .streaming
-        .lock()
-        .map_err(|e| format!("lock: {e}"))?;
-    if let Some(sess) = guard.as_ref() {
-        let _ = sess.forget(id);
+    if let Some(h) = handle {
+        let _ = h.forget(id);
     }
     Ok(())
 }
 
 
-/// Lazy rqbit spawn. Held under the AppState mutex; subsequent calls reuse
-/// the running session. `app` is forwarded to the session so its stdout
-/// drainer can emit init-progress events to the frontend.
-fn ensure_streaming<'a>(
-    state: &'a State<'_, AppState>,
+/// Module-level flag for the torrent stats poller. The poller thread resets
+/// this to `false` before exiting (after 60 s idle) so `ensure_streaming` can
+/// re-spawn it for future torrents. Using a static avoids needing to send a
+/// reference to the non-Arc `stats_poller_started` field across threads.
+static STATS_POLLER_ALIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Ensure rqbit is running and return a lightweight `SessionHandle` that can
+/// perform HTTP requests without holding the streaming mutex. The lock is
+/// held only long enough to spawn the sidecar (if needed) and clone the
+/// handle — all subsequent network I/O runs lock-free (Fix B27).
+fn ensure_streaming(
+    state: &State<'_, AppState>,
     app: &AppHandle,
-) -> Result<std::sync::MutexGuard<'a, Option<StreamingSession>>, String> {
-    let mut guard = state
-        .streaming
-        .lock()
-        .map_err(|e| format!("streaming lock: {e}"))?;
-    if guard.is_none() {
-        let exe = streaming::locate_rqbit().ok_or_else(|| {
-            "rqbit.exe not found in bin/ — installer must place it next to NewPlayer.exe"
-                .to_string()
-        })?;
-        let session = StreamingSession::start(&exe, &streaming::session_dir(), app.clone())?;
-        *guard = Some(session);
-    }
-    // First-time setup: kick off the stats poller so the LoadingSourceOverlay
-    // gets live speed/peers/ETA every second. We do this here (not in
-    // StreamingSession::start) because the poller needs access to AppState's
-    // active_torrent / torrent_ids — those don't exist inside streaming.rs.
-    if !state.stats_poller_started.swap(true, Ordering::AcqRel) {
+) -> Result<streaming::SessionHandle, String> {
+    let handle = {
+        let mut guard = state
+            .streaming
+            .lock()
+            .map_err(|e| format!("streaming lock: {e}"))?;
+        if guard.is_none() {
+            let exe = streaming::locate_rqbit().ok_or_else(|| {
+                "rqbit.exe not found in bin/ — installer must place it next to NewPlayer.exe"
+                    .to_string()
+            })?;
+            let session = StreamingSession::start(&exe, &streaming::session_dir(), app.clone())?;
+            *guard = Some(session);
+        }
+        guard.as_ref().unwrap().handle()
+    }; // streaming guard dropped here — all subsequent I/O is lock-free
+    // Kick off the stats poller so the LoadingSourceOverlay gets live
+    // speed/peers/ETA every second. The poller thread resets
+    // STATS_POLLER_ALIVE before exiting so it can be re-spawned for future
+    // torrents (Fix 8).
+    if !STATS_POLLER_ALIVE.swap(true, Ordering::AcqRel) {
         spawn_torrent_stats_poller(state, app);
     }
-    // Re-borrow as a guard exposing the StreamingSession via the impl below.
-    // The guard's deref points into the Option; callers go through helpers.
-    Ok(guard)
+    Ok(handle)
 }
 
 /// Spawn a background thread that polls rqbit for live torrent stats once a
@@ -1513,42 +1569,53 @@ fn spawn_torrent_stats_poller(state: &State<'_, AppState>, app: &AppHandle) {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(1000));
             // Pick the torrent to poll: active first, fall back to any registered.
+            // Lock ordering: torrent_ids (2) before active_torrent (3) to
+            // match the canonical order: streaming(1) > torrent_ids(2) >
+            // active_torrent(3) > torrent_video_idxs(4) > torrent_video_files(5).
             let id_opt: Option<u32> = {
+                let fallback_id = torrent_ids
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.iter().next().copied());
                 let active_id = active
                     .lock()
                     .ok()
                     .and_then(|g| g.as_ref().map(|a| a.torrent_id));
-                active_id.or_else(|| {
-                    torrent_ids
-                        .lock()
-                        .ok()
-                        .and_then(|g| g.iter().next().copied())
-                })
+                active_id.or(fallback_id)
             };
             if id_opt.is_none() {
                 idle_count += 1;
                 if idle_count > 60 {
+                    // Reset so ensure_streaming can re-spawn a new poller
+                    // for future torrents (Fix 8).
+                    STATS_POLLER_ALIVE.store(false, Ordering::Release);
                     break;
-                } // exit after ~60s of no active torrent
+                }
                 continue;
             } else {
                 idle_count = 0;
             }
             let Some(id) = id_opt else { continue };
-            // Hold the streaming lock briefly to issue the stats GET. The
-            // request itself takes ~10-30 ms locally; other commands wait for
-            // it but don't perceive the delay.
-            let stats = {
-                let guard = match streaming.lock() {
-                    Ok(g) => g,
-                    Err(_) => continue,
-                };
-                match guard.as_ref() {
-                    Some(s) => s.get_stats(id),
-                    None => continue,
-                }
+            // Clone the base_url + http agent out of the streaming lock so the
+            // actual HTTP GET happens without holding the mutex. The stats GET
+            // typically takes ~10-30 ms locally, but under load it can stall;
+            // holding the streaming lock during that time blocks add_magnet /
+            // set_only_files callers.
+            let stats_result = {
+                let (base_url, http) = {
+                    let guard = match streaming.lock() {
+                        Ok(g) => g,
+                        Err(_) => continue,
+                    };
+                    match guard.as_ref() {
+                        Some(s) => (s.base_url().to_string(), s.http_agent()),
+                        None => continue,
+                    }
+                }; // streaming guard dropped here
+                // Perform the HTTP GET outside the lock.
+                fetch_torrent_stats(&http, &base_url, id)
             };
-            match stats {
+            match stats_result {
                 Ok(s) => {
                     let _ = app.emit("mpv:torrent-stats", s);
                 }
@@ -1560,31 +1627,17 @@ fn spawn_torrent_stats_poller(state: &State<'_, AppState>, app: &AppHandle) {
     });
 }
 
-// MutexGuard<Option<StreamingSession>> doesn't have add_magnet — convenience
-// trait so call sites stay readable.
-trait StreamingGuard {
-    fn add_magnet(&self, uri: &str) -> Result<AddedTorrent, String>;
-    fn add_torrent_bytes(&self, bytes: &[u8]) -> Result<AddedTorrent, String>;
-    fn set_only_files(&self, id: u32, idxs: &[usize]) -> Result<(), String>;
+/// Fetch torrent stats without holding the streaming lock. Uses the standalone
+/// `streaming::fetch_stats` so the HTTP GET runs lock-free.
+fn fetch_torrent_stats(
+    http: &ureq::Agent,
+    base_url: &str,
+    id: u32,
+) -> Result<streaming::TorrentStats, String> {
+    streaming::fetch_stats(http, base_url, id)
 }
 
-impl StreamingGuard for std::sync::MutexGuard<'_, Option<StreamingSession>> {
-    fn add_magnet(&self, uri: &str) -> Result<AddedTorrent, String> {
-        self.as_ref()
-            .ok_or_else(|| "streaming session vanished".to_string())?
-            .add_magnet(uri)
-    }
-    fn add_torrent_bytes(&self, bytes: &[u8]) -> Result<AddedTorrent, String> {
-        self.as_ref()
-            .ok_or_else(|| "streaming session vanished".to_string())?
-            .add_torrent_bytes(bytes)
-    }
-    fn set_only_files(&self, id: u32, idxs: &[usize]) -> Result<(), String> {
-        self.as_ref()
-            .ok_or_else(|| "streaming session vanished".to_string())?
-            .set_only_files(id, idxs)
-    }
-}
+
 
 /// Returns a window of up to `n` consecutive video file indices from the
 /// torrent's video index list, starting at `file_idx`. Used by both
@@ -1619,6 +1672,25 @@ pub fn handle_torrent_advance(state: &AppState, url: &str) {
         return;
     };
 
+    // Lock ordering: streaming (1) > torrent_ids (2) > active_torrent (3)
+    // > torrent_video_idxs (4) > torrent_video_files (5).
+    //
+    // Clone the http agent + base_url out of the streaming lock so we can
+    // run set_only_files without holding it (Fix 4: don't hold mutex across
+    // network I/O that can block up to 120 s).
+    let session_data = {
+        let guard = match state.streaming.lock() {
+            Ok(g) => g,
+            Err(e) => {
+                crate::np_warn!("rqbit", "streaming lock poisoned: {e}");
+                return;
+            }
+        };
+        guard
+            .as_ref()
+            .map(|s| (s.base_url().to_string(), s.http_agent()))
+    }; // streaming guard dropped here
+
     // Track previous file for the active-torrent update below.
     let prev = state.active_torrent.lock().ok().and_then(|g| {
         g.as_ref()
@@ -1626,15 +1698,6 @@ pub fn handle_torrent_advance(state: &AppState, url: &str) {
     });
 
     // Mark the current video file plus the next two video files as wanted.
-    // Rqbit only downloads wanted files, so limiting the window means the
-    // rest of the torrent stays on disk once downloaded rather than wasting
-    // bandwidth on episodes the user may never watch.
-    //
-    // On-demand recovery: if the user skips past this window, events.rs
-    // EndFile error handler calls try_recover_torrent_load, which widens the
-    // window to include the skipped-to file and issues a loadfile-replace
-    // retry. This gives the "play any episode" guarantee without downloading
-    // the whole season upfront.
     let wanted: Vec<usize> = torrent_sliding_window(
         state, file_idx, 3, // current + next 2
     );
@@ -1649,18 +1712,19 @@ pub fn handle_torrent_advance(state: &AppState, url: &str) {
         });
     }
 
-    // Acquire the streaming lock briefly. If rqbit was forgotten between the
-    // event and now (unlikely), just skip silently.
-    let guard = match state.streaming.lock() {
-        Ok(g) => g,
-        Err(e) => {
-            crate::np_warn!("rqbit", "streaming lock poisoned: {e}");
-            return;
-        }
-    };
-    if let Some(session) = guard.as_ref() {
-        if let Err(e) = session.set_only_files(torrent_id, &wanted) {
-            crate::np_warn!("rqbit", "prefetch set_only_files failed: {e}");
+    // Issue the set_only_files call without holding any lock. The HTTP
+    // request can take significant time during rqbit's initial-checksum phase.
+    if let Some((base_url, http)) = session_data {
+        let url = format!("{}/torrents/{}/update_only_files", base_url, torrent_id);
+        let body = serde_json::json!({ "only_files": wanted });
+        if let Ok(body_bytes) = serde_json::to_vec(&body) {
+            let result = http
+                .post(&url)
+                .set("Content-Type", "application/json")
+                .send_bytes(&body_bytes);
+            if let Err(e) = result {
+                crate::np_warn!("rqbit", "prefetch set_only_files failed: {e}");
+            }
         }
     }
 }
@@ -1698,7 +1762,12 @@ pub fn try_recover_torrent_load(state: &AppState, app: &AppHandle, failed_url: &
         Some(p) => p.clone(),
         None => return false,
     };
-    let streaming = state.streaming.clone();
+    // Extract a SessionHandle so the spawned thread can do HTTP without
+    // holding the streaming lock.
+    let handle = match state.streaming.lock().ok().and_then(|g| g.as_ref().map(|s| s.handle())) {
+        Some(h) => h,
+        None => return false,
+    };
     let app2 = app.clone();
     let retry_url = failed_url.to_string();
 
@@ -1711,25 +1780,13 @@ pub fn try_recover_torrent_load(state: &AppState, app: &AppHandle, failed_url: &
                 progress: None,
             },
         );
-        let result = {
-            let guard = match streaming.lock() {
-                Ok(g) => g,
-                Err(_) => {
-                    let _ = app2.emit("mpv:source-loading-done", ());
-                    return;
-                }
-            };
-            guard
-                .as_ref()
-                .map(|s| s.set_only_files(torrent_id, &wanted))
-        };
-        match result {
-            Some(Ok(_)) => {
+        match handle.set_only_files(torrent_id, &wanted) {
+            Ok(_) => {
                 // rqbit now accepts the stream; issue loadfile-replace.
                 // LoadingSourceOverlay auto-dismisses on time-pos > 0.3.
                 let _ = player.command(&["loadfile", &retry_url, "replace"]);
             }
-            _ => {
+            Err(_) => {
                 let _ = app2.emit("mpv:source-loading-done", ());
             }
         }
@@ -1740,23 +1797,29 @@ pub fn try_recover_torrent_load(state: &AppState, app: &AppHandle, failed_url: &
 /// Forget every torrent ID we've added in this session. Best-effort —
 /// individual failures are logged. Called from app shutdown so rqbit's
 /// session is empty when the sidecar process is killed.
+///
+/// Lock ordering: streaming (1) before torrent_ids (2). We acquire streaming
+/// first, snapshot the IDs while still holding it, then issue the forget
+/// calls. This prevents ABBA deadlocks with the stats poller and other paths
+/// that also hold streaming while touching torrent_ids.
 pub fn forget_all_torrents(state: &AppState) {
+    // Lock ordering: streaming (1) before torrent_ids (2). Extract a handle
+    // and snapshot IDs, then drop both locks before issuing HTTP forget calls.
+    let handle = state
+        .streaming
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|s| s.handle()));
     let ids: Vec<u32> = state
         .torrent_ids
         .lock()
         .ok()
         .map(|g| g.iter().copied().collect())
         .unwrap_or_default();
-    if ids.is_empty() {
-        return;
-    }
-    let guard = match state.streaming.lock() {
-        Ok(g) => g,
-        Err(_) => return,
-    };
-    if let Some(session) = guard.as_ref() {
+    // Both locks are dropped. HTTP I/O runs lock-free.
+    if let Some(h) = handle {
         for id in &ids {
-            let _ = session.forget(*id);
+            let _ = h.forget(*id);
         }
     }
 }
@@ -1773,7 +1836,13 @@ pub fn forget_all_torrents(state: &AppState) {
 /// for rqbit's lock — which manifests as the new file showing endless
 /// "loading" while the old torrent keeps eating bandwidth.
 pub fn drop_previous_sources(state: &AppState) {
+    // Lock ordering: streaming (1) > torrent_ids (2) > active_torrent (3)
+    // > torrent_video_idxs (4) > torrent_video_files (5).
+    // Use forget_all_torrents which respects the ordering and runs HTTP
+    // calls outside all locks.
     forget_all_torrents(state);
+    // Now clear state in canonical lock order. Each lock is acquired and
+    // released independently (no nesting) so ordering is trivially safe.
     if let Ok(mut g) = state.torrent_ids.lock() {
         g.clear();
     }

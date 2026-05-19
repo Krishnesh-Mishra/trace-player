@@ -6,10 +6,11 @@ interface Props {
   max: number;
   step: number;
   onChange: (v: number) => void;
+  label?: string;
 }
 
 /** Generic horizontal slider with pointer-capture drag. Stepped + clamped. */
-export default function RangeSlider({ value, min, max, step, onChange }: Props) {
+export default function RangeSlider({ value, min, max, step, onChange, label }: Props) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -27,10 +28,44 @@ export default function RangeSlider({ value, min, max, step, onChange }: Props) 
 
   const pct = valueToPct(value);
 
+  const defaultStep = step || (max - min) * 0.01;
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    let next = value;
+    switch (e.key) {
+      case "ArrowRight":
+      case "ArrowUp":
+        next = Math.min(max, value + defaultStep);
+        break;
+      case "ArrowLeft":
+      case "ArrowDown":
+        next = Math.max(min, value - defaultStep);
+        break;
+      case "Home":
+        next = min;
+        break;
+      case "End":
+        next = max;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    const stepped = Math.round(next / step) * step;
+    onChange(Math.min(max, Math.max(min, stepped)));
+  };
+
   return (
     <div
       ref={trackRef}
-      className="relative h-4 flex items-center cursor-pointer select-none"
+      tabIndex={0}
+      role="slider"
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={value}
+      aria-label={label}
+      className="relative h-4 flex items-center cursor-pointer select-none outline-none focus-visible:ring-2 focus-visible:ring-[var(--np-accent)] rounded"
+      onKeyDown={handleKeyDown}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
         setDragging(true);

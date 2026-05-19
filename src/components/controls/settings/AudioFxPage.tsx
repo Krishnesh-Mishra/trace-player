@@ -140,6 +140,29 @@ function EqColumn({
   };
   const pct = ((12 - value) / 24) * 100;
   const label = freq >= 1000 ? `${freq / 1000}k` : `${freq}`;
+  const ariaLabel = freq >= 1000 ? `${freq / 1000} kHz` : `${freq} Hz`;
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    let next = value;
+    switch (e.key) {
+      case "ArrowUp":
+        next = Math.min(12, value + 1);
+        break;
+      case "ArrowDown":
+        next = Math.max(-12, value - 1);
+        break;
+      case "Home":
+        next = 12;
+        break;
+      case "End":
+        next = -12;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    onChange(next);
+  };
 
   return (
     <div className="flex flex-col items-center gap-1 select-none">
@@ -148,7 +171,14 @@ function EqColumn({
       </span>
       <div
         ref={trackRef}
-        className="relative w-2.5 h-20 cursor-pointer"
+        tabIndex={0}
+        role="slider"
+        aria-valuemin={-12}
+        aria-valuemax={12}
+        aria-valuenow={value}
+        aria-label={ariaLabel}
+        className="relative w-2.5 h-20 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--np-accent)] rounded"
+        onKeyDown={handleKeyDown}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
           onChange(yToDb(e.clientY));

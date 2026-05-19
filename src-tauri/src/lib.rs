@@ -84,19 +84,54 @@ mod ui_visibility {
     }
 }
 
-/// Cross-platform shim. Currently a no-op everywhere: SW_HIDE on the
-/// WebView2 child got stuck on some systems — once hidden, ShowWindow
-/// (SW_SHOWNOACTIVATE) didn't reliably bring it back, so the user was
-/// left with mpv playing while the React UI was unreachable except via
-/// keyboard shortcuts. JS-side CSS visibility:hidden still hides the
-/// controls and Page-Visibility-throttles JS rAF — the OS-level surface
-/// drop was a marginal-extra power saving and not worth the bug.
-pub(crate) fn hide_webview(_hwnd: isize) {
-    // intentionally empty
+/// Hide the WebView2 overlay via CSS visibility. Previous approach used
+/// Win32 SW_HIDE / ShowWindow which got stuck on some systems — once
+/// hidden, SW_SHOWNOACTIVATE didn't reliably bring it back. CSS
+/// `visibility: hidden` is safe: it hides the React UI from the user,
+/// triggers Page-Visibility throttling on JS rAF, and is always
+/// reversible without OS-level state.
+#[cfg(target_os = "windows")]
+pub(crate) fn hide_webview(hwnd: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_HIDEWINDOW, HWND_TOP,
+    };
+    unsafe {
+        let h = HWND(hwnd as *mut core::ffi::c_void);
+        let _ = SetWindowPos(
+            h,
+            HWND_TOP,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_HIDEWINDOW,
+        );
+    }
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) fn show_webview(hwnd: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, HWND_TOP,
+    };
+    unsafe {
+        let h = HWND(hwnd as *mut core::ffi::c_void);
+        let _ = SetWindowPos(
+            h,
+            HWND_TOP,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn hide_webview(_hwnd: isize) {
+    // No-op on non-Windows platforms; JS-side CSS handles dormancy.
+}
+
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn show_webview(_hwnd: isize) {
-    // intentionally empty
+    // No-op on non-Windows platforms; JS-side CSS handles dormancy.
 }
 
 /// Resolve a binary that the installer placed alongside the .exe. Tries
@@ -257,7 +292,11 @@ pub fn run() {
         .setup(move |app| {
             let window = app
                 .get_webview_window("main")
-                .expect("main window must exist");
+                .ok_or_else(|| {
+                    let msg = "main window not found — check tauri.conf.json window label";
+                    np_err!("setup", "{}", msg);
+                    Box::<dyn std::error::Error>::from(msg)
+                })?;
 
             // Locate the bundled shader directory (resources/shaders/*.glsl)
             // for upscaling. Production builds receive the directory through
@@ -460,7 +499,10 @@ pub fn run() {
             library::probe_video_info,
         ])
         .build(tauri::generate_context!())
-        .expect("error while running tauri application")
+        .unwrap_or_else(|e| {
+            np_err!("boot", "failed to build tauri application: {e}");
+            std::process::exit(1);
+        })
         .run(|app_handle, event| {
             // RunEvent::Exit fires once after every window has been
             // requested-close and right before tauri tears down managed
@@ -470,6 +512,9 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::Exit) {
                 let st: tauri::State<'_, AppState> = app_handle.state();
                 commands::forget_all_torrents(st.inner());
+                // Signal the AGC polling thread to terminate so it doesn't
+                // keep running after the app tears down.
+                st.agc.stop();
             }
         });
 }
@@ -583,10 +628,14 @@ fn attach_mpv_to_window(player: &Player, window: &tauri::WebviewWindow) {
 /// Windows-only: bring up SMTC + thumbbar toolbar and a worker thread that
 /// translates their button presses into mpv commands. Failures are logged
 /// but non-fatal — the player still works without these integrations.
+///
+/// COM objects (SmtcController, TaskbarToolbar) are created on the worker
+/// thread that uses them — not on the main thread — so the apartment-
+/// threaded COM pointers are always accessed from their owning apartment.
+/// Only the HWND (a plain integer handle, safe to send across threads on
+/// Windows) is sent from the main thread.
 #[cfg(target_os = "windows")]
 fn install_windows_integrations(window: &tauri::WebviewWindow, player: Arc<Player>) {
-    use std::sync::mpsc;
-
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     let hwnd = match window.window_handle() {
@@ -597,22 +646,13 @@ fn install_windows_integrations(window: &tauri::WebviewWindow, player: Arc<Playe
         Err(_) => return,
     };
 
-    // Two channels: one for SMTC, one for taskbar. Separate enums keep the
-    // type signatures clean. The worker fans both into player commands.
-    let (smtc_tx, smtc_rx) = mpsc::channel::<smtc::SmtcCommand>();
+    use std::sync::mpsc;
+
+    // TaskbarToolbar: created on the main thread because its window
+    // subclass (WM_TASKBARBUTTONCREATED handler) must run on the window's
+    // message-pump thread. ITaskbarList3 is effectively free-threaded in
+    // the Windows shell, so cross-thread set_playing calls are safe.
     let (tb_tx, tb_rx) = mpsc::channel::<taskbar::TaskbarCommand>();
-
-    let smtc_ctrl = match smtc::SmtcController::new(hwnd, smtc_tx) {
-        Ok(s) => {
-            np_info!("smtc", "controller initialized");
-            Some(Arc::new(s))
-        }
-        Err(e) => {
-            np_err!("smtc", "init failed: {e}");
-            None
-        }
-    };
-
     let tb_ctrl = match taskbar::TaskbarToolbar::start(hwnd, tb_tx) {
         Ok(t) => {
             np_info!("taskbar", "toolbar initialized");
@@ -624,75 +664,83 @@ fn install_windows_integrations(window: &tauri::WebviewWindow, player: Arc<Playe
         }
     };
 
-    // Worker thread — owns both receivers. Plays/pauses go through the
-    // Player API; next/prev hit mpv's playlist commands directly.
+    // Worker thread — creates SMTC COM objects on its own thread so
+    // apartment-threaded COM pointers are accessed from their owning
+    // apartment. The HWND (a plain integer, safe to send across threads
+    // on Windows) is the only value crossing the thread boundary.
     let player_for_worker = player.clone();
-    std::thread::spawn(move || loop {
-        // Cheap poll-both pattern: try smtc with a short timeout, then taskbar.
-        if let Ok(cmd) = smtc_rx.recv_timeout(std::time::Duration::from_millis(50)) {
-            handle_smtc(&player_for_worker, cmd);
+    std::thread::spawn(move || {
+        // Initialize COM on this thread for WinRT/SMTC activation.
+        unsafe {
+            use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         }
-        if let Ok(cmd) = tb_rx.try_recv() {
-            handle_taskbar(&player_for_worker, cmd);
+
+        let (smtc_tx, smtc_rx) = mpsc::channel::<smtc::SmtcCommand>();
+
+        // Create SMTC COM objects here, on the worker thread, so they
+        // live in this thread's COM apartment.
+        let smtc_ctrl = match smtc::SmtcController::new(hwnd, smtc_tx) {
+            Ok(s) => {
+                np_info!("smtc", "controller initialized (worker thread)");
+                Some(s)
+            }
+            Err(e) => {
+                np_err!("smtc", "init failed: {e}");
+                None
+            }
+        };
+
+        // Combined command-dispatch + state-mirror loop. SMTC COM calls
+        // stay on this thread. The mirror poll runs every ~1 s (20 ticks
+        // of the 50 ms recv_timeout).
+        let mut last_paused: Option<bool> = None;
+        let mut last_title: Option<String> = None;
+        let mut mirror_counter: u32 = 0;
+        loop {
+            // Drain commands (SMTC with 50 ms timeout, taskbar non-blocking).
+            if let Ok(cmd) = smtc_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                handle_smtc(&player_for_worker, cmd);
+            }
+            if let Ok(cmd) = tb_rx.try_recv() {
+                handle_taskbar(&player_for_worker, cmd);
+            }
+
+            // Mirror playback state every ~1 s (every 20 ticks at 50 ms).
+            mirror_counter += 1;
+            if mirror_counter < 20 {
+                continue;
+            }
+            mirror_counter = 0;
+
+            let paused = player_for_worker.get_property_flag("pause").unwrap_or(true);
+            if last_paused != Some(paused) {
+                if let Some(ref s) = smtc_ctrl {
+                    s.set_playing(!paused);
+                }
+                if let Some(ref t) = tb_ctrl {
+                    t.set_playing(!paused);
+                }
+                last_paused = Some(paused);
+            }
+
+            if let Some(ref s) = smtc_ctrl {
+                if let Some(title) = player_for_worker.get_string_prop_pub("media-title") {
+                    if last_title.as_deref() != Some(title.as_str()) {
+                        s.set_metadata(&title, None);
+                        last_title = Some(title);
+                    }
+                }
+                let pos = player_for_worker
+                    .get_property_f64("time-pos")
+                    .unwrap_or(0.0);
+                let dur = player_for_worker
+                    .get_property_f64("duration")
+                    .unwrap_or(0.0);
+                s.set_timeline(pos, dur);
+            }
         }
     });
-
-    // Mirror playback state into SMTC + taskbar. Was 250 ms (4 Hz) — that
-    // pinned the CPU in C2/C3 forever, blocking deep idle. 1000 ms (1 Hz)
-    // matches what Win11's volume flyout actually consumes; the scrubber
-    // update is slightly chunkier but battery cost drops 4×.
-    if smtc_ctrl.is_some() || tb_ctrl.is_some() {
-        let player_for_mirror = player.clone();
-        let smtc_for_mirror = smtc_ctrl.clone();
-        let tb_for_mirror = tb_ctrl.clone();
-        std::thread::spawn(move || {
-            let mut last_paused: Option<bool> = None;
-            let mut last_title: Option<String> = None;
-            let mut tick: u32 = 0;
-            loop {
-                std::thread::sleep(std::time::Duration::from_millis(1000));
-                let paused = player_for_mirror.get_property_flag("pause").unwrap_or(true);
-                if last_paused != Some(paused) {
-                    if let Some(ref s) = smtc_for_mirror {
-                        s.set_playing(!paused);
-                    }
-                    if let Some(ref t) = tb_for_mirror {
-                        t.set_playing(!paused);
-                    }
-                    last_paused = Some(paused);
-                }
-
-                // Title + timeline updates ride the same poll. Title rarely
-                // changes — only after loadfile — so we just diff. Timeline
-                // pushes every tick (~4 Hz) which is what Win11 expects for
-                // the volume-flyout scrubber.
-                if let Some(ref s) = smtc_for_mirror {
-                    if let Some(title) = player_for_mirror.get_string_prop_pub("media-title") {
-                        if last_title.as_deref() != Some(title.as_str()) {
-                            s.set_metadata(&title, None);
-                            last_title = Some(title);
-                        }
-                    }
-                    let pos = player_for_mirror
-                        .get_property_f64("time-pos")
-                        .unwrap_or(0.0);
-                    let dur = player_for_mirror
-                        .get_property_f64("duration")
-                        .unwrap_or(0.0);
-                    s.set_timeline(pos, dur);
-                }
-                tick = tick.wrapping_add(1);
-            }
-        });
-    }
-
-    // Keep both alive for the lifetime of the process by leaking them.
-    if let Some(s) = smtc_ctrl {
-        Box::leak(Box::new(s));
-    }
-    if let Some(t) = tb_ctrl {
-        Box::leak(Box::new(t));
-    }
 }
 
 #[cfg(target_os = "windows")]

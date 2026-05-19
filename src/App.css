@@ -86,8 +86,12 @@ button:active {
   background-color: #e8e8e8;
 }
 
-input,
-button {
+*:focus-visible {
+  outline: 2px solid var(--np-accent, #646cff);
+  outline-offset: 2px;
+}
+
+*:focus:not(:focus-visible) {
   outline: none;
 }
 

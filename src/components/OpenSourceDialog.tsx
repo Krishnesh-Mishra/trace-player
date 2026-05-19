@@ -3,6 +3,36 @@ import { motion, AnimatePresence } from "framer-motion";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
 
+function useFocusTrap(ref: React.RefObject<HTMLElement | null>, active: boolean) {
+  useEffect(() => {
+    if (!active || !ref.current) return;
+    const el = ref.current;
+    const prev = document.activeElement as HTMLElement;
+    const focusable = el.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length) focusable[0].focus();
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || !focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    el.addEventListener('keydown', handler);
+    return () => {
+      el.removeEventListener('keydown', handler);
+      prev?.focus();
+    };
+  }, [active]);
+}
+
 interface Props {
   open: boolean;
   onSubmit: (url: string, append: boolean) => Promise<void> | void;
@@ -31,6 +61,8 @@ export default function OpenSourceDialog({ open, onSubmit, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
 
   useEffect(() => {
     if (open) {
@@ -88,6 +120,10 @@ export default function OpenSourceDialog({ open, onSubmit, onClose }: Props) {
           onClick={onClose}
         >
           <motion.div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Open source"
             className="bg-[#111]/95 backdrop-blur-xl  rounded-2xl
                        shadow-2xl p-5 w-[460px] max-w-[92vw] flex flex-col gap-4"
             initial={{ scale: 0.92, y: -8 }}

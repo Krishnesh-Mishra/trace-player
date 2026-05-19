@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Clock, Globe, FolderOpen, Magnet, X, Trash2 } from "lucide-react";
 
@@ -61,6 +61,29 @@ export default function RecentSourcesPanel({
   onClose,
 }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleClearClick = useCallback(() => {
+    if (confirmClear) {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+      confirmTimer.current = null;
+      setConfirmClear(false);
+      onClear();
+    } else {
+      setConfirmClear(true);
+      confirmTimer.current = setTimeout(() => {
+        setConfirmClear(false);
+        confirmTimer.current = null;
+      }, 3000);
+    }
+  }, [confirmClear, onClear]);
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -100,12 +123,19 @@ export default function RecentSourcesPanel({
             <div className="flex items-center gap-1">
               {recents.length > 0 && (
                 <button
-                  onClick={onClear}
+                  onClick={handleClearClick}
                   title="Clear recent"
-                  className="p-1.5 text-white/55 hover:text-white/90 hover:bg-white/8
-                             rounded-lg cursor-pointer transition-colors duration-100"
+                  className={`flex items-center gap-1 px-1.5 py-1 rounded-lg cursor-pointer
+                             transition-colors duration-100
+                             ${confirmClear
+                               ? "text-red-400 hover:text-red-300 hover:bg-red-500/15"
+                               : "text-white/55 hover:text-white/90 hover:bg-white/8"
+                             }`}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
+                  {confirmClear && (
+                    <span className="text-[11px] whitespace-nowrap">Confirm?</span>
+                  )}
                 </button>
               )}
               <button

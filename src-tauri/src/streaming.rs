@@ -22,6 +22,15 @@ pub struct StreamingSession {
     http: ureq::Agent,
 }
 
+/// Lightweight, cloneable handle to the rqbit HTTP API. Callers can extract
+/// this from a locked `StreamingSession`, drop the mutex guard, then perform
+/// arbitrarily long HTTP requests without holding the streaming lock.
+#[derive(Clone)]
+pub struct SessionHandle {
+    pub base_url: String,
+    pub http: ureq::Agent,
+}
+
 // Subset of the JSON response from `POST /torrents`. rqbit may add fields,
 // so we accept-and-ignore extras via serde defaults.
 #[derive(Deserialize)]
@@ -102,6 +111,7 @@ const VIDEO_EXTS: &[&str] = &[
     "m2ts", "mts",
 ];
 
+#[allow(dead_code)]
 impl StreamingSession {
     /// Spawn rqbit.exe, wait up to 5 s for it to log its bound port. Output
     /// folder is `%LOCALAPPDATA%\NewPlayer\torrent-session\` — created if
@@ -140,6 +150,14 @@ impl StreamingSession {
         cmd.arg("--http-api-listen-addr")
             .arg("127.0.0.1:0")
             .arg("--disable-dht-persistence")
+            // Throttle upload so the player doesn't saturate the user's
+            // upstream bandwidth. rqbit's --upload-rate-limit-mibps caps
+            // upload to the given MiB/s. 0.5 MiB/s (~4 Mbit/s) is enough
+            // to be a good peer without starving the user's connection.
+            // TODO: rqbit does not currently support --disable-upload or an
+            // upload ratio limit; revisit when rqbit adds those options.
+            .arg("--upload-rate-limit-mibps")
+            .arg("0.5")
             .arg("server")
             .arg("start")
             .arg("--disable-persistence")
@@ -240,6 +258,22 @@ impl StreamingSession {
         &self.base_url
     }
 
+    /// Clone the ureq agent so callers can perform HTTP requests after
+    /// dropping the streaming mutex guard. This avoids holding the lock
+    /// across potentially slow network I/O.
+    pub fn http_agent(&self) -> ureq::Agent {
+        self.http.clone()
+    }
+
+    /// Return a lightweight, cloneable handle suitable for performing HTTP
+    /// requests without holding the streaming mutex.
+    pub fn handle(&self) -> SessionHandle {
+        SessionHandle {
+            base_url: self.base_url.clone(),
+            http: self.http.clone(),
+        }
+    }
+
     pub fn add_magnet(&self, uri: &str) -> Result<AddedTorrent, String> {
         self.add_payload(uri.as_bytes(), "text/plain")
     }
@@ -287,19 +321,34 @@ impl StreamingSession {
         let resp =
             resp_opt.ok_or_else(|| format!("rqbit POST /torrents (after retries): {last_err}"))?;
 
-        let body_str = resp
-            .into_string()
-            .map_err(|e| format!("rqbit response read: {e}"))?;
-        if body_str.len() > 4 * 1024 * 1024 {
-            eprintln!(
-                "[streaming] response too large ({} bytes), skipping",
-                body_str.len()
-            );
-            return Err(format!(
-                "rqbit response too large ({} bytes)",
-                body_str.len()
-            ));
-        }
+        // Read the response body in chunks up to the 4 MiB limit. We read
+        // incrementally and bail as soon as we exceed the cap, rather than
+        // reading the entire response into memory first — a malicious or
+        // misbehaving rqbit could otherwise OOM us.
+        const MAX_BODY: usize = 4 * 1024 * 1024;
+        let body_str = {
+            let mut reader = resp.into_reader();
+            let mut buf = Vec::with_capacity(8192);
+            let mut chunk = [0u8; 8192];
+            loop {
+                let n = std::io::Read::read(&mut reader, &mut chunk)
+                    .map_err(|e| format!("rqbit response read: {e}"))?;
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.len() > MAX_BODY {
+                    eprintln!(
+                        "[streaming] response too large (>{MAX_BODY} bytes), skipping"
+                    );
+                    return Err(format!(
+                        "rqbit response too large (>{MAX_BODY} bytes)"
+                    ));
+                }
+            }
+            String::from_utf8(buf)
+                .map_err(|e| format!("rqbit response not UTF-8: {e}"))?
+        };
         crate::np_debug!("rqbit", "add response: {}", body_str);
         let parsed: TorrentAddResp = serde_json::from_str(&body_str)
             .map_err(|e| format!("rqbit JSON parse: {e} — body: {body_str}"))?;
@@ -420,103 +469,7 @@ impl StreamingSession {
     /// Snapshot the rqbit stats for one torrent. Parses the JSON loosely so
     /// schema drift between rqbit versions doesn't break the overlay.
     pub fn get_stats(&self, id: u32) -> Result<TorrentStats, String> {
-        let url = format!("{}/torrents/{}/stats/v1", self.base_url, id);
-        let resp = self
-            .http
-            .get(&url)
-            .call()
-            .map_err(|e| format!("rqbit GET stats: {e}"))?;
-        let body = resp
-            .into_string()
-            .map_err(|e| format!("rqbit stats body: {e}"))?;
-        let v: serde_json::Value =
-            serde_json::from_str(&body).map_err(|e| format!("rqbit stats json: {e}"))?;
-
-        // Helpers — `or_else_ptr` walks an alternate JSON pointer when the
-        // primary one isn't present. rqbit's snapshot key has lived under
-        // `/snapshot`, `/live/snapshot`, and the top level depending on
-        // version, so try each.
-        let u64_at = |paths: &[&str]| -> u64 {
-            for p in paths {
-                if let Some(n) = v.pointer(p).and_then(|n| n.as_u64()) {
-                    return n;
-                }
-            }
-            0
-        };
-        let f64_at = |paths: &[&str]| -> f64 {
-            for p in paths {
-                if let Some(n) = v.pointer(p).and_then(|n| n.as_f64()) {
-                    return n;
-                }
-            }
-            0.0
-        };
-
-        let state = v
-            .get("state")
-            .and_then(|s| s.as_str())
-            .unwrap_or("")
-            .to_string();
-        let progress_bytes = u64_at(&[
-            "/snapshot/have_bytes",
-            "/snapshot/downloaded_and_checked_bytes",
-            "/live/snapshot/have_bytes",
-            "/live/snapshot/downloaded_and_checked_bytes",
-            "/progress_bytes",
-        ]);
-        let total_bytes = u64_at(&["/snapshot/total_bytes", "/total_bytes"]);
-        // rqbit reports speed in mbps (megabits) on some builds and as a
-        // bytes-per-second number on others; normalize to bytes/sec by
-        // probing both shapes.
-        let download_speed_bps = {
-            let mbps = f64_at(&["/download_speed/mbps", "/live/download_speed/mbps"]);
-            if mbps > 0.0 {
-                mbps * 1024.0 * 1024.0
-            } else {
-                f64_at(&["/download_speed/bps", "/live/download_speed/bps"])
-            }
-        };
-        let upload_speed_bps = {
-            let mbps = f64_at(&["/upload_speed/mbps", "/live/upload_speed/mbps"]);
-            if mbps > 0.0 {
-                mbps * 1024.0 * 1024.0
-            } else {
-                f64_at(&["/upload_speed/bps", "/live/upload_speed/bps"])
-            }
-        };
-        let peers_live = u64_at(&["/live/snapshot/peer_stats/live", "/live/peers/live"]) as u32;
-        let peers_queued =
-            u64_at(&["/live/snapshot/peer_stats/queued", "/live/peers/queued"]) as u32;
-        let peers_seen = u64_at(&["/live/snapshot/peer_stats/seen", "/live/peers/seen"]) as u32;
-        let eta_seconds = v
-            .pointer("/time_remaining/duration/secs")
-            .and_then(|n| n.as_u64());
-        let init_progress = if state == "initializing" {
-            v.pointer("/initialization_progress")
-                .and_then(|n| n.as_f64())
-        } else {
-            None
-        };
-        let name = v
-            .get("name")
-            .and_then(|s| s.as_str())
-            .map(|s| s.to_string());
-
-        Ok(TorrentStats {
-            torrent_id: id,
-            state,
-            progress_bytes,
-            total_bytes,
-            download_speed_bps,
-            upload_speed_bps,
-            peers_live,
-            peers_queued,
-            peers_seen,
-            eta_seconds,
-            init_progress,
-            name,
-        })
+        fetch_stats(&self.http, &self.base_url, id)
     }
 
     /// Remove a torrent from rqbit's session. Files on disk remain (we keep
@@ -549,6 +502,267 @@ impl StreamingSession {
             .map_err(|e| format!("rqbit POST start: {e}"))?;
         Ok(())
     }
+}
+
+impl SessionHandle {
+    pub fn add_magnet(&self, uri: &str) -> Result<AddedTorrent, String> {
+        self.add_payload(uri.as_bytes(), "text/plain")
+    }
+
+    pub fn add_torrent_bytes(&self, bytes: &[u8]) -> Result<AddedTorrent, String> {
+        self.add_payload(bytes, "application/octet-stream")
+    }
+
+    fn add_payload(&self, body: &[u8], ctype: &str) -> Result<AddedTorrent, String> {
+        let url = format!("{}/torrents?overwrite=true", self.base_url);
+        let mut last_err: String = String::new();
+        let mut resp_opt: Option<ureq::Response> = None;
+        for attempt in 0..20 {
+            match self
+                .http
+                .post(&url)
+                .set("Content-Type", ctype)
+                .send_bytes(body)
+            {
+                Ok(r) => {
+                    resp_opt = Some(r);
+                    break;
+                }
+                Err(e) => {
+                    last_err = e.to_string();
+                    let transient = matches!(&e, ureq::Error::Transport(_));
+                    if !transient {
+                        return Err(format!("rqbit POST /torrents: {e}"));
+                    }
+                    if attempt >= 19 {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(150));
+                }
+            }
+        }
+        let resp =
+            resp_opt.ok_or_else(|| format!("rqbit POST /torrents (after retries): {last_err}"))?;
+
+        const MAX_BODY: usize = 4 * 1024 * 1024;
+        let body_str = {
+            let mut reader = resp.into_reader();
+            let mut buf = Vec::with_capacity(8192);
+            let mut chunk = [0u8; 8192];
+            loop {
+                let n = std::io::Read::read(&mut reader, &mut chunk)
+                    .map_err(|e| format!("rqbit response read: {e}"))?;
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.len() > MAX_BODY {
+                    return Err(format!("rqbit response too large (>{MAX_BODY} bytes)"));
+                }
+            }
+            String::from_utf8(buf)
+                .map_err(|e| format!("rqbit response not UTF-8: {e}"))?
+        };
+        crate::np_debug!("rqbit", "add response: {}", body_str);
+        let parsed: TorrentAddResp = serde_json::from_str(&body_str)
+            .map_err(|e| format!("rqbit JSON parse: {e} — body: {body_str}"))?;
+
+        let idxs = pick_all_videos(&parsed.details.files);
+        if idxs.is_empty() {
+            let archive_count = parsed
+                .details
+                .files
+                .iter()
+                .filter(|f| {
+                    let ext = std::path::Path::new(&f.name)
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_ascii_lowercase());
+                    matches!(ext.as_deref(), Some("zip" | "7z" | "rar"))
+                })
+                .count();
+            if archive_count > 0 {
+                return Err(format!(
+                    "torrent contains {archive_count} archive(s) (.zip/.7z/.rar) but no \
+                     direct video files — archive-streaming over torrent isn't supported yet. \
+                     Download the archive first, then open it from disk."
+                ));
+            }
+            return Err(
+                "no playable video file found in torrent (expected mp4/mkv/avi/...)".to_string(),
+            );
+        }
+        let videos: Vec<VideoFile> = idxs
+            .into_iter()
+            .map(|idx| {
+                let f = &parsed.details.files[idx];
+                VideoFile {
+                    idx,
+                    name: f.name.clone(),
+                    length: f.length,
+                    stream_url: format!("{}/torrents/{}/stream/{}", self.base_url, parsed.id, idx),
+                }
+            })
+            .collect();
+        let torrent_name = parsed.details.name.unwrap_or_else(|| format!("Torrent #{}", parsed.id));
+        Ok(AddedTorrent {
+            id: parsed.id,
+            info_hash: parsed.details.info_hash,
+            name: torrent_name,
+            videos,
+        })
+    }
+
+    pub fn set_only_files(&self, id: u32, idxs: &[usize]) -> Result<(), String> {
+        let url = format!("{}/torrents/{}/update_only_files", self.base_url, id);
+        let body = serde_json::json!({ "only_files": idxs });
+        let body_bytes =
+            serde_json::to_vec(&body).map_err(|e| format!("set_only_files json: {e}"))?;
+        let mut last_status: u16 = 0;
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let mut delay_ms: u64 = 150;
+        let mut attempt: u32 = 0;
+        while Instant::now() < deadline {
+            attempt += 1;
+            match self
+                .http
+                .post(&url)
+                .set("Content-Type", "application/json")
+                .send_bytes(&body_bytes)
+            {
+                Ok(_) => {
+                    crate::np_debug!(
+                        "rqbit",
+                        "torrent {id} only_files={idxs:?} (attempt {attempt})"
+                    );
+                    return Ok(());
+                }
+                Err(ureq::Error::Status(code, _)) if code == 500 => {
+                    last_status = 500;
+                    std::thread::sleep(Duration::from_millis(delay_ms));
+                    delay_ms = (delay_ms + 100).min(1000);
+                    continue;
+                }
+                Err(e) => {
+                    return Err(format!("rqbit POST update_only_files: {e}"));
+                }
+            }
+        }
+        Err(format!(
+            "torrent didn't finish initial checksum within 120 s \
+             (last rqbit status: {last_status}). Try a smaller / better-seeded torrent, \
+             or wait and re-open."
+        ))
+    }
+
+    pub fn forget(&self, id: u32) -> Result<(), String> {
+        let url = format!("{}/torrents/{}/forget", self.base_url, id);
+        self.http
+            .post(&url)
+            .send_string("")
+            .map_err(|e| format!("rqbit POST forget: {e}"))?;
+        crate::np_debug!("rqbit", "torrent {id} forgotten");
+        Ok(())
+    }
+
+    pub fn get_stats(&self, id: u32) -> Result<TorrentStats, String> {
+        fetch_stats(&self.http, &self.base_url, id)
+    }
+}
+
+/// Standalone stats fetch usable without holding the `StreamingSession` mutex.
+/// Callers clone the `http` agent and `base_url` out of the guard, drop it,
+/// then call this function so the HTTP GET runs lock-free.
+pub fn fetch_stats(http: &ureq::Agent, base_url: &str, id: u32) -> Result<TorrentStats, String> {
+    let url = format!("{}/torrents/{}/stats/v1", base_url, id);
+    let resp = http
+        .get(&url)
+        .call()
+        .map_err(|e| format!("rqbit GET stats: {e}"))?;
+    let body = resp
+        .into_string()
+        .map_err(|e| format!("rqbit stats body: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("rqbit stats json: {e}"))?;
+
+    let u64_at = |paths: &[&str]| -> u64 {
+        for p in paths {
+            if let Some(n) = v.pointer(p).and_then(|n| n.as_u64()) {
+                return n;
+            }
+        }
+        0
+    };
+    let f64_at = |paths: &[&str]| -> f64 {
+        for p in paths {
+            if let Some(n) = v.pointer(p).and_then(|n| n.as_f64()) {
+                return n;
+            }
+        }
+        0.0
+    };
+
+    let state = v
+        .get("state")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    let progress_bytes = u64_at(&[
+        "/snapshot/have_bytes",
+        "/snapshot/downloaded_and_checked_bytes",
+        "/live/snapshot/have_bytes",
+        "/live/snapshot/downloaded_and_checked_bytes",
+        "/progress_bytes",
+    ]);
+    let total_bytes = u64_at(&["/snapshot/total_bytes", "/total_bytes"]);
+    let download_speed_bps = {
+        let mbps = f64_at(&["/download_speed/mbps", "/live/download_speed/mbps"]);
+        if mbps > 0.0 {
+            mbps * 1024.0 * 1024.0
+        } else {
+            f64_at(&["/download_speed/bps", "/live/download_speed/bps"])
+        }
+    };
+    let upload_speed_bps = {
+        let mbps = f64_at(&["/upload_speed/mbps", "/live/upload_speed/mbps"]);
+        if mbps > 0.0 {
+            mbps * 1024.0 * 1024.0
+        } else {
+            f64_at(&["/upload_speed/bps", "/live/upload_speed/bps"])
+        }
+    };
+    let peers_live = u64_at(&["/live/snapshot/peer_stats/live", "/live/peers/live"]) as u32;
+    let peers_queued =
+        u64_at(&["/live/snapshot/peer_stats/queued", "/live/peers/queued"]) as u32;
+    let peers_seen = u64_at(&["/live/snapshot/peer_stats/seen", "/live/peers/seen"]) as u32;
+    let eta_seconds = v
+        .pointer("/time_remaining/duration/secs")
+        .and_then(|n| n.as_u64());
+    let init_progress = if state == "initializing" {
+        v.pointer("/initialization_progress")
+            .and_then(|n| n.as_f64())
+    } else {
+        None
+    };
+    let name = v
+        .get("name")
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string());
+
+    Ok(TorrentStats {
+        torrent_id: id,
+        state,
+        progress_bytes,
+        total_bytes,
+        download_speed_bps,
+        upload_speed_bps,
+        peers_live,
+        peers_queued,
+        peers_seen,
+        eta_seconds,
+        init_progress,
+        name,
+    })
 }
 
 impl Drop for StreamingSession {

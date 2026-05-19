@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Play, Pause, Gauge, Subtitles, Volume2, Info,
-  ChevronRight,
+  ChevronRight, ListPlus,
 } from "lucide-react";
 import { type Track, trackLabel } from "./types";
 
@@ -20,6 +20,7 @@ interface Props {
   onAudioTrackChange: (id: string) => void;
   onSubtitleTrackChange: (id: string) => void;
   onMediaInfo: () => void;
+  onAddToPlaylist?: () => void;
 }
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
@@ -38,6 +39,7 @@ export default function AppContextMenu({
   onAudioTrackChange,
   onSubtitleTrackChange,
   onMediaInfo,
+  onAddToPlaylist,
 }: Props) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [submenu, setSubmenu] = useState<"speed" | "audio" | "subtitle" | null>(null);
@@ -82,13 +84,23 @@ export default function AppContextMenu({
 
   if (!menu) return null;
 
+  // Count visible menu items to estimate height for viewport clamping.
+  // Base items when hasFile: play + divider + speed + audio? + subtitle? + divider + addToPlaylist? + properties = ~7-9
+  const itemCount = hasFile
+    ? 3 + (audioTracks.length > 0 ? 1 : 0) + (subtitleTracks.length > 0 ? 1 : 0) + 1 + (onAddToPlaylist ? 1 : 0) + 1
+    : 1;
+  const menuWidth = 200;
+  const menuHeight = itemCount * 36;
+  const clampedX = Math.min(menu.x, window.innerWidth - menuWidth - 8);
+  const clampedY = Math.min(menu.y, window.innerHeight - menuHeight - 8);
+
   return (
     <AnimatePresence>
       <motion.div
         ref={menuRef}
-        className="fixed z-[200] origin-top-left min-w-[180px] py-1 bg-[#1a1a1a]  
+        className="fixed z-[200] origin-top-left min-w-[180px] py-1 bg-[#1a1a1a]
                    rounded-lg shadow-xl shadow-black/50 backdrop-blur-sm"
-        style={{ left: menu.x, top: menu.y }}
+        style={{ left: clampedX, top: clampedY }}
         initial={{ opacity: 0, scale: 0.92 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.92 }}
@@ -236,6 +248,17 @@ export default function AppContextMenu({
             )}
 
             <div className="h-px bg-white/8 my-1 mx-2" />
+
+            {onAddToPlaylist && (
+              <button
+                onClick={() => act(onAddToPlaylist)}
+                className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[11px]
+                           text-white/80 hover:bg-white/10 transition-colors duration-75 cursor-pointer"
+              >
+                <ListPlus className="w-3.5 h-3.5 opacity-70" />
+                <span className="flex-1">Add to Playlist</span>
+              </button>
+            )}
 
             <button
               onClick={() => act(onMediaInfo)}

@@ -1,6 +1,36 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { FolderPlus } from "lucide-react";
+
+function useFocusTrap(ref: React.RefObject<HTMLElement | null>, active: boolean) {
+  useEffect(() => {
+    if (!active || !ref.current) return;
+    const el = ref.current;
+    const prev = document.activeElement as HTMLElement;
+    const focusable = el.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length) focusable[0].focus();
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || !focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    el.addEventListener('keydown', handler);
+    return () => {
+      el.removeEventListener('keydown', handler);
+      prev?.focus();
+    };
+  }, [active]);
+}
 
 interface Props {
   open: boolean;
@@ -10,6 +40,8 @@ interface Props {
 
 export default function NewFolderDialog({ open, onConfirm, onCancel }: Props) {
   const [name, setName] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
 
   const handleSubmit = () => {
     const trimmed = name.trim();
@@ -23,6 +55,15 @@ export default function NewFolderDialog({ open, onConfirm, onCancel }: Props) {
     onCancel();
   };
 
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open, onCancel]);
+
   return (
     <AnimatePresence>
       {open && (
@@ -35,6 +76,10 @@ export default function NewFolderDialog({ open, onConfirm, onCancel }: Props) {
         >
           <div className="absolute inset-0 bg-black/50" />
           <motion.div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="New folder"
             className="relative bg-[#141414] rounded-xl shadow-2xl w-[300px] p-4"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}

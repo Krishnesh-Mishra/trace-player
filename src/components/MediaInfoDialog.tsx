@@ -1,8 +1,38 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
 import { fmtTime } from "./types";
+
+function useFocusTrap(ref: React.RefObject<HTMLElement | null>, active: boolean) {
+  useEffect(() => {
+    if (!active || !ref.current) return;
+    const el = ref.current;
+    const prev = document.activeElement as HTMLElement;
+    const focusable = el.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length) focusable[0].focus();
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || !focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    el.addEventListener('keydown', handler);
+    return () => {
+      el.removeEventListener('keydown', handler);
+      prev?.focus();
+    };
+  }, [active]);
+}
 
 interface MediaInfo {
   filename: string;
@@ -50,11 +80,22 @@ interface Props {
 
 export default function MediaInfoDialog({ open, onClose }: Props) {
   const [info, setInfo] = useState<MediaInfo | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
 
   useEffect(() => {
     if (!open) return;
     invoke<MediaInfo>("get_media_info").then(setInfo).catch(() => setInfo(null));
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); onClose(); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open, onClose]);
 
   const baseName = info?.path.split(/[\\/]/).pop() ?? info?.filename ?? "";
 
@@ -69,6 +110,10 @@ export default function MediaInfoDialog({ open, onClose }: Props) {
           onClick={onClose}
         >
           <motion.div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Media information"
             className="bg-[#111]/92 backdrop-blur-xl  rounded-2xl
                        shadow-2xl w-80 max-h-[70vh] flex flex-col overflow-hidden"
             initial={{ scale: 0.92, y: -8 }}
@@ -81,6 +126,7 @@ export default function MediaInfoDialog({ open, onClose }: Props) {
               <span className="text-xs font-medium text-white">Media Info</span>
               <button
                 onClick={onClose}
+                aria-label="Close"
                 className="w-6 h-6 flex items-center justify-center text-white/40
                            hover:text-white rounded-md hover:bg-white/10 cursor-pointer
                            transition-colors duration-100"

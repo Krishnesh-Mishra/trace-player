@@ -6,6 +6,36 @@ import { listen } from "@tauri-apps/api/event";
 import { FolderOpen, Magnet, X, Loader2, FileUp } from "lucide-react";
 import type { TorrentVideoInfo } from "./types";
 
+function useFocusTrap(ref: React.RefObject<HTMLElement | null>, active: boolean) {
+  useEffect(() => {
+    if (!active || !ref.current) return;
+    const el = ref.current;
+    const prev = document.activeElement as HTMLElement;
+    const focusable = el.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length) focusable[0].focus();
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || !focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    el.addEventListener('keydown', handler);
+    return () => {
+      el.removeEventListener('keydown', handler);
+      prev?.focus();
+    };
+  }, [active]);
+}
+
 interface ResolvedTorrent {
   magnet: string;
   name: string;
@@ -37,6 +67,8 @@ export default function ImportDialog({
   const [resolving, setResolving] = useState(false);
   const [resolvePhase, setResolvePhase] = useState("");
   const mountedRef = useRef(true);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, isOpen);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -148,6 +180,15 @@ export default function ImportDialog({
     onClose();
   };
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); handleClose(); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isOpen]);
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -160,6 +201,10 @@ export default function ImportDialog({
         >
           <div className="absolute inset-0 bg-black/60" />
           <motion.div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Import"
             className="relative bg-[#111] rounded-2xl shadow-2xl w-[380px] p-5"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}
@@ -171,6 +216,7 @@ export default function ImportDialog({
               <h3 className="text-sm font-medium text-white/90">Import</h3>
               <button
                 onClick={handleClose}
+                aria-label="Close"
                 className="w-6 h-6 flex items-center justify-center text-white/40
                            hover:text-white rounded-md hover:bg-white/10 cursor-pointer
                            transition-colors duration-100"

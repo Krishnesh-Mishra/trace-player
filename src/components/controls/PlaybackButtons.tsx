@@ -27,17 +27,18 @@ export default function PlaybackButtons({
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}
         onClick={onSkipBack}
+        aria-label="Previous"
         title="Back 10 seconds (J / ←)"
       >
         <Seek10Icon direction="back" />
       </motion.button>
       <motion.button
-        key={isPlaying ? "pause" : "play"}
         className="w-9 h-9 flex items-center justify-center text-white rounded-lg
                    hover:bg-white/10 cursor-pointer transition-colors duration-100"
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}
         onClick={onPlayPause}
+        aria-label="Play / Pause"
         title="Play / Pause (Space / K)"
       >
         {isPlaying ? (
@@ -54,6 +55,7 @@ export default function PlaybackButtons({
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}
         onClick={onSkipForward}
+        aria-label="Next"
         title="Forward 10 seconds (L / →)"
       >
         <Seek10Icon direction="forward" />

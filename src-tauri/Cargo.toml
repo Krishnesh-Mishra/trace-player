@@ -30,7 +30,9 @@ ureq = { version = "2", features = ["json", "tls"] }
 # Archive support (Slice 3): zip is pure Rust, sevenz-rust is pure Rust;
 # unrar wraps the upstream UnRAR C lib (vendored). All three feed a shared
 # trait in archive.rs so the lazy-extract + LRU code is format-agnostic.
-zip = { version = "~0.6", default-features = false, features = ["deflate"] }
+# TODO: upgrade to zip 2.x (current stable) — API changed (ZipArchive::new,
+# by_index return types differ); needs archive.rs refactor.
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
 sevenz-rust = "~0.6"
 unrar = "~0.5"
 filetime = "0.2"
@@ -61,5 +63,5 @@ lto = "fat"
 codegen-units = 1
 opt-level = 3
 strip = true
-panic = "unwind"
+panic = "abort"
 incremental = false

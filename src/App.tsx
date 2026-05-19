@@ -36,7 +36,7 @@ import BufferingBanner from "./components/BufferingBanner";
 import RecentSourcesPanel from "./components/RecentSourcesPanel";
 import { ACCENT_PALETTE, DENSE_LRU_MAX, denseBucket } from "./components/types";
 import { log } from "./lib/log";
-import PlaylistPanel from "./components/PlaylistPanel";
+
 import SubtitleSettingsPanel, {
   type SubtitleStyle,
   DEFAULT_SUBTITLE_STYLE,
@@ -46,6 +46,9 @@ import LibraryModal from "./components/library/LibraryModal";
 import GestureLayer from "./components/GestureLayer";
 import PipBar from "./components/PipBar";
 import AppContextMenu from "./components/AppContextMenu";
+
+/** Lightweight error logger for .catch() handlers on user-facing operations. */
+const logErr = (ctx: string) => (e: unknown) => console.warn(`[TracePlayer] ${ctx}:`, e);
 
 type TrackList = { audio: Track[]; subtitle: Track[] };
 
@@ -92,8 +95,12 @@ export default function App() {
   const [volume, setVolume] = useState(80);
   const [isMuted, setIsMuted] = useState(false);
 
-  const [progress, setProgress] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
+  // progress and currentTime are ref-primary: updated at 10Hz by mpv:time-pos
+  // but only trigger a React re-render at ~1Hz via displayTime for the time badge.
+  // Timeline reads from progressRef directly and updates its own DOM.
+  const progressRef = useRef(0);
+  const [displayTime, setDisplayTime] = useState(0);
+  const displayTimeCounter = useRef(0);
   const [duration, setDuration] = useState(0);
 
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
@@ -145,7 +152,6 @@ export default function App() {
   // Phase 6: loop + playlist + appearance
   const [loopMode, setLoopMode] = useState<LoopMode>("off");
   const [playlist, setPlaylist] = useState<PlaylistItem[]>([]);
-  const [playlistOpen, setPlaylistOpen] = useState(false);
   const [appearance, setAppearance] = useState<AppearanceState>(DEFAULT_APPEARANCE);
 
   const [pipMode, setPipMode] = useState(false);
@@ -213,14 +219,14 @@ export default function App() {
   useEffect(() => { hasFileRef.current = hasFile; }, [hasFile]);
   useEffect(() => { volumeRef.current = volume; }, [volume]);
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
-  useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
+  // currentTimeRef is now primary (written by mpv:time-pos directly), no sync needed.
   useEffect(() => { abLoopARef.current = abLoopA; }, [abLoopA]);
   useEffect(() => { abLoopBRef.current = abLoopB; }, [abLoopB]);
   useEffect(() => { isSeekingRef.current = isSeeking; }, [isSeeking]);
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
   useEffect(() => {
-    anyOverlayOpenRef.current = jumpToTimeOpen || mediaInfoOpen || openSourceOpen || recentPanelOpen || subtitlePanelOpen || playlistOpen || libraryOpen;
-  }, [jumpToTimeOpen, mediaInfoOpen, openSourceOpen, recentPanelOpen, subtitlePanelOpen, playlistOpen, libraryOpen]);
+    anyOverlayOpenRef.current = jumpToTimeOpen || mediaInfoOpen || openSourceOpen || recentPanelOpen || subtitlePanelOpen || libraryOpen;
+  }, [jumpToTimeOpen, mediaInfoOpen, openSourceOpen, recentPanelOpen, subtitlePanelOpen, libraryOpen]);
   useEffect(() => { isLocalFileRef.current = isLocalFile; }, [isLocalFile]);
   useEffect(() => { hoverPreviewRef.current = hoverPreview; }, [hoverPreview]);
 
@@ -251,9 +257,15 @@ export default function App() {
             return;
           }
         }
-        setCurrentTime(t);
+        // Update refs at full 10Hz rate (Timeline reads these directly)
+        currentTimeRef.current = t;
         const d = durationRef.current;
-        if (d > 0) setProgress((t / d) * 100);
+        if (d > 0) progressRef.current = (t / d) * 100;
+        // Throttle React re-renders to ~1Hz for the time display badge
+        displayTimeCounter.current++;
+        if (displayTimeCounter.current % 10 === 0) {
+          setDisplayTime(t);
+        }
       })
     );
 
@@ -447,8 +459,9 @@ export default function App() {
           clearLoadingState();
           setHasFile(false);
           setIsPlaying(false);
-          setProgress(0);
-          setCurrentTime(0);
+          progressRef.current = 0;
+          currentTimeRef.current = 0;
+          setDisplayTime(0);
           setDuration(0);
           seekTargetRef.current = null;
           setChapters([]);
@@ -476,8 +489,9 @@ export default function App() {
         // takes 10-30 s more for pieces to land. The mpv:duration > 0
         // listener does the actual splash-clear once playback is real.
         setHasFile(true);
-        setProgress(0);
-        setCurrentTime(0);
+        progressRef.current = 0;
+        currentTimeRef.current = 0;
+        setDisplayTime(0);
         seekTargetRef.current = null;
         // Reset all seek state: a previous seek (committed or drag) may still
         // be in-flight when the file changes. Without this, isSeeking stays
@@ -579,9 +593,10 @@ export default function App() {
         log.info("rehydrate", `path=${s.path} timePos=${s.timePos.toFixed(1)} dur=${s.duration.toFixed(1)}`);
         setHasFile(true);
         setIsPlaying(!s.paused);
-        setCurrentTime(s.timePos);
+        currentTimeRef.current = s.timePos;
+        setDisplayTime(s.timePos);
         setDuration(s.duration);
-        if (s.duration > 0) setProgress((s.timePos / s.duration) * 100);
+        if (s.duration > 0) progressRef.current = (s.timePos / s.duration) * 100;
         setVolume(Math.round(s.volume));
         setPlaybackSpeed(s.speed);
         setPlaylist(s.playlist);
@@ -706,6 +721,16 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
+  // Debounced store.save() — individual useEffects call store.set() immediately
+  // but the disk write is coalesced so rapid changes don't serialize 20x/sec.
+  const debouncedSave = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const saveStore = useCallback(() => {
+    clearTimeout(debouncedSave.current);
+    debouncedSave.current = setTimeout(() => {
+      storeRef.current?.save().catch(() => {});
+    }, 500);
+  }, []);
+
   useEffect(() => {
     if (!storeLoaded || hasFile) return;
     const timer = setTimeout(() => {
@@ -718,52 +743,52 @@ export default function App() {
   // first-render defaults would overwrite saved values).
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("subtitleStyle", subtitleStyle).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("subtitleStyle", subtitleStyle).then(() => saveStore()).catch(() => {});
   }, [subtitleStyle]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("subtitleDelay", subtitleDelay).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("subtitleDelay", subtitleDelay).then(() => saveStore()).catch(() => {});
   }, [subtitleDelay]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("imageParams", imageParams).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("imageParams", imageParams).then(() => saveStore()).catch(() => {});
   }, [imageParams]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("videoState", videoState).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("videoState", videoState).then(() => saveStore()).catch(() => {});
   }, [videoState]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("perfProfile", perfProfile).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("perfProfile", perfProfile).then(() => saveStore()).catch(() => {});
   }, [perfProfile]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("hdrMode", hdrMode).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("hdrMode", hdrMode).then(() => saveStore()).catch(() => {});
   }, [hdrMode]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("upscaling", upscaling).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("upscaling", upscaling).then(() => saveStore()).catch(() => {});
   }, [upscaling]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("interpolation", interpolation).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("interpolation", interpolation).then(() => saveStore()).catch(() => {});
   }, [interpolation]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("vsync", vsync).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("vsync", vsync).then(() => saveStore()).catch(() => {});
   }, [vsync]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("exclusiveFullscreen", exclusiveFullscreen).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("exclusiveFullscreen", exclusiveFullscreen).then(() => saveStore()).catch(() => {});
   }, [exclusiveFullscreen]);
 
   // Push the exclusive-fs preference into mpv whenever it changes — mpv
@@ -776,37 +801,37 @@ export default function App() {
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("audioFx", audioFx).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("audioFx", audioFx).then(() => saveStore()).catch(() => {});
   }, [audioFx]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("appearance", appearance).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("appearance", appearance).then(() => saveStore()).catch(() => {});
   }, [appearance]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("loopMode", loopMode).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("loopMode", loopMode).then(() => saveStore()).catch(() => {});
   }, [loopMode]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("deinterlace", deinterlace).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("deinterlace", deinterlace).then(() => saveStore()).catch(() => {});
   }, [deinterlace]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("alwaysOnTop", alwaysOnTop).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("alwaysOnTop", alwaysOnTop).then(() => saveStore()).catch(() => {});
   }, [alwaysOnTop]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("audioDevice", audioDevice).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("audioDevice", audioDevice).then(() => saveStore()).catch(() => {});
   }, [audioDevice]);
 
   useEffect(() => {
     if (!storeLoadedRef.current || !storeRef.current) return;
-    storeRef.current.set("pipMode", pipMode).then(() => storeRef.current?.save()).catch(() => {});
+    storeRef.current.set("pipMode", pipMode).then(() => saveStore()).catch(() => {});
   }, [pipMode]);
 
   // Apply accent color as CSS custom property so any component (Timeline
@@ -880,15 +905,15 @@ export default function App() {
     }
   }, [isPlaying, scheduleHide, clearHideTimer]);
 
-  // Keep controls visible while either side panel is open.
+  // Keep controls visible while the subtitle panel is open.
   useEffect(() => {
-    if (subtitlePanelOpen || playlistOpen) {
+    if (subtitlePanelOpen) {
       setShowControls(true);
       clearHideTimer();
     } else if (isPlayingRef.current) {
       scheduleHide();
     }
-  }, [subtitlePanelOpen, playlistOpen, scheduleHide, clearHideTimer]);
+  }, [subtitlePanelOpen, scheduleHide, clearHideTimer]);
 
   const handleMouseMove = useCallback(() => {
     setShowControls(true);
@@ -931,7 +956,7 @@ export default function App() {
     clearDormancyTimer();
     if (showControls) return;
     if (!isPlayingRef.current) return;
-    if (subtitlePanelOpen || playlistOpen || jumpToTimeOpen || mediaInfoOpen) return;
+    if (subtitlePanelOpen || jumpToTimeOpen || mediaInfoOpen) return;
     if (pipMode) return;
     dormancyTimerRef.current = setTimeout(() => {
       isDormantRef.current = true;
@@ -941,7 +966,6 @@ export default function App() {
   }, [
     showControls,
     subtitlePanelOpen,
-    playlistOpen,
     jumpToTimeOpen,
     mediaInfoOpen,
     pipMode,
@@ -1013,7 +1037,7 @@ export default function App() {
   const seekRelative = useCallback((delta: number) => {
     if (!hasFileRef.current) return;
     log.info("seek", `relative delta=${delta}s`);
-    invoke("seek", { seconds: delta, mode: "relative" }).catch(() => {});
+    invoke("seek", { seconds: delta, mode: "relative" }).catch(logErr("seek_relative"));
   }, []);
 
   // Hover-driven dense thumbnail request. Timeline debounces, so this is
@@ -1037,10 +1061,11 @@ export default function App() {
     if (d <= 0) return;
     const seconds = (pct / 100) * d;
     seekTargetRef.current = seconds;
-    setCurrentTime(seconds);
-    setProgress(pct);
+    currentTimeRef.current = seconds;
+    progressRef.current = pct;
+    setDisplayTime(seconds);
     log.info("seek", `absolute pct=${pct.toFixed(2)}% t=${seconds.toFixed(3)}s`);
-    invoke("seek", { seconds, mode: "absolute" }).catch(() => {});
+    invoke("seek", { seconds, mode: "absolute" }).catch(logErr("seek"));
   }, []);
 
   const stepVolume = useCallback((delta: number) => {
@@ -1072,7 +1097,7 @@ export default function App() {
       await invoke("set_screenshot_dir", { path: picked });
       if (storeRef.current) {
         await storeRef.current.set("screenshotDir", picked);
-        await storeRef.current.save();
+        saveStore();
       }
     } catch (e) {
       setError(String(e));
@@ -1132,7 +1157,7 @@ export default function App() {
   const addToRecentFiles = useCallback((path: string) => {
     setRecentFiles((prev) => {
       const next = [path, ...prev.filter((p) => p !== path)].slice(0, 15);
-      storeRef.current?.set("recentFiles", next).then(() => storeRef.current?.save()).catch(() => {});
+      storeRef.current?.set("recentFiles", next).then(() => saveStore()).catch(() => {});
       return next;
     });
   }, []);
@@ -1140,7 +1165,7 @@ export default function App() {
   const removeFromRecentFiles = useCallback((path: string) => {
     setRecentFiles((prev) => {
       const next = prev.filter((p) => p !== path);
-      storeRef.current?.set("recentFiles", next).then(() => storeRef.current?.save()).catch(() => {});
+      storeRef.current?.set("recentFiles", next).then(() => saveStore()).catch(() => {});
       return next;
     });
   }, []);
@@ -1162,10 +1187,7 @@ export default function App() {
   }, []);
 
   const togglePlaylistPanel = useCallback(() => {
-    setPlaylistOpen((o) => {
-      if (!o) setSubtitlePanelOpen(false);
-      return !o;
-    });
+    setLibraryOpen(true);
   }, []);
 
   // Open file dialog and append everything chosen onto the playlist. If
@@ -1223,10 +1245,6 @@ export default function App() {
     invoke("playlist_clear").catch((e) => setError(String(e)));
   }, []);
 
-  const handlePlaylistShuffle = useCallback(() => {
-    invoke("playlist_shuffle").catch((e) => setError(String(e)));
-  }, []);
-
   const handlePlaylistMove = useCallback((from: number, to: number) => {
     // mpv playlist-move semantics: move element at `from` to before index `to`.
     // If the user is dragging a row downward past its current position, we
@@ -1234,10 +1252,6 @@ export default function App() {
     // after it up by one.
     const target = to > from ? to + 1 : to;
     invoke("playlist_move", { from, to: target }).catch((e) => setError(String(e)));
-  }, []);
-
-  const handleLoopPlaylistToggleFromPanel = useCallback(() => {
-    setLoopMode((cur) => (cur === "playlist" ? "off" : "playlist"));
   }, []);
 
   // ── keyboard shortcuts ──────────────────────────────────────────────────────
@@ -1448,6 +1462,28 @@ export default function App() {
       setHasFile(true);
       setError(null);
       addToRecentFiles(path);
+
+      // Auto-populate playlist with sibling video files from the same folder.
+      if (!isArchive && !isNetworkPath(path)) {
+        const sep = path.lastIndexOf("\\") >= 0 ? path.lastIndexOf("\\") : path.lastIndexOf("/");
+        if (sep >= 0) {
+          const parentDir = path.slice(0, sep);
+          try {
+            const siblings = await invoke<{ name: string; path: string; size: number }[]>(
+              "read_directory_videos",
+              { path: parentDir },
+            );
+            const sorted = siblings
+              .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }))
+              .filter((v) => v.path !== path);
+            if (sorted.length > 0) {
+              await invoke("playlist_add_many", { paths: sorted.map((v) => v.path) });
+            }
+          } catch (dirErr) {
+            log.warn("load", `auto-populate playlist failed: ${String(dirErr)}`);
+          }
+        }
+      }
     } catch (e) {
       log.err("load", `${isArchive ? "open_archive" : "load_file"} failed: ${String(e)}`);
       setError(String(e));
@@ -1583,14 +1619,15 @@ export default function App() {
     [clearLoadingState]
   );
 
-  const handleVolumeChange = (v: number) => {
+  const handleVolumeChange = useCallback((v: number) => {
+    const prev = volumeRef.current;
     setVolume(v);
     setIsMuted(v === 0);
-    invoke("set_volume", { volume: v }).catch((e) => setError(String(e)));
-    invoke("set_mute", { muted: v === 0 }).catch(() => {});
-  };
+    invoke("set_volume", { volume: v }).catch((e) => { setVolume(prev); logErr("set_volume")(e); });
+    invoke("set_mute", { muted: v === 0 }).catch(logErr("set_mute"));
+  }, []);
 
-  const handleMuteToggle = () => toggleMute();
+  const handleMuteToggle = useCallback(() => toggleMute(), [toggleMute]);
 
   // Live scrubbing: while the user drags the timeline thumb, we want video
   // to follow the cursor instead of waiting until pointer-up. mpv handles
@@ -1608,21 +1645,21 @@ export default function App() {
     if (seconds === null) return;
     log.debug("seek", `drag fire t=${seconds.toFixed(3)}s (keyframes)`);
     seekTargetRef.current = seconds;
-    invoke("seek", { seconds, mode: "absolute+keyframes" }).catch(() => {});
+    invoke("seek", { seconds, mode: "absolute+keyframes" }).catch(logErr("seek_keyframes"));
   }, []);
 
-  const handleSeek = (p: number) => {
-    setProgress(p);
+  const handleSeek = useCallback((p: number) => {
+    progressRef.current = p;
     const d = durationRef.current;
     if (d <= 0 || !hasFileRef.current) return;
     const seconds = (p / 100) * d;
-    setCurrentTime(seconds);
+    currentTimeRef.current = seconds;
     dragSeekPendingRef.current = seconds;
     if (dragSeekTimerRef.current !== null) return;
     dragSeekTimerRef.current = setTimeout(fireDragSeek, 33);
-  };
+  }, [fireDragSeek]);
 
-  const handleSeekCommit = (p: number) => {
+  const handleSeekCommit = useCallback((p: number) => {
     // Cancel any pending throttled drag-seek so the exact commit isn't
     // overwritten by a stale keyframes-mode seek that fires after.
     if (dragSeekTimerRef.current !== null) {
@@ -1637,7 +1674,7 @@ export default function App() {
     if (seekIndicatorTimerRef.current) clearTimeout(seekIndicatorTimerRef.current);
     seekIndicatorTimerRef.current = setTimeout(() => setIsSeeking(false), 100000);
     seekAbsolutePct(p);
-  };
+  }, [seekAbsolutePct]);
 
   useEffect(() => {
     return () => {
@@ -1646,23 +1683,26 @@ export default function App() {
     };
   }, []);
 
-  const handleSkipBack = () => seekRelative(-10);
-  const handleSkipForward = () => seekRelative(10);
+  const handleSkipBack = useCallback(() => seekRelative(-10), [seekRelative]);
+  const handleSkipForward = useCallback(() => seekRelative(10), [seekRelative]);
 
-  const handleSpeedChange = (speed: number) => {
+  const handleSpeedChange = useCallback((speed: number) => {
+    const prev = playbackSpeed;
     setPlaybackSpeed(speed);
-    invoke("set_speed", { speed }).catch((e) => setError(String(e)));
-  };
+    invoke("set_speed", { speed }).catch((e) => { setPlaybackSpeed(prev); logErr("set_speed")(e); });
+  }, [playbackSpeed]);
 
-  const handleAudioTrackChange = (id: string) => {
+  const handleAudioTrackChange = useCallback((id: string) => {
+    const prev = selectedAudio;
     setSelectedAudio(id);
-    invoke("set_audio_track", { trackId: id }).catch((e) => setError(String(e)));
-  };
+    invoke("set_audio_track", { trackId: id }).catch((e) => { setSelectedAudio(prev); logErr("set_audio_track")(e); });
+  }, [selectedAudio]);
 
-  const handleSubtitleTrackChange = (id: string) => {
+  const handleSubtitleTrackChange = useCallback((id: string) => {
+    const prev = selectedSub;
     setSelectedSub(id);
-    invoke("set_subtitle_track", { trackId: id }).catch((e) => setError(String(e)));
-  };
+    invoke("set_subtitle_track", { trackId: id }).catch((e) => { setSelectedSub(prev); logErr("set_subtitle_track")(e); });
+  }, [selectedSub]);
 
   // Single audio-FX push: unifies mono + dynamic + normalize + night-mode +
   // pitch + audio delay through one backend call so the af chain is
@@ -1715,54 +1755,53 @@ export default function App() {
     };
   }, []);
 
-  const handleMonoAudioToggle = () => {
+  const handleMonoAudioToggle = useCallback(() => {
     const next = !monoAudio;
     setMonoAudio(next);
     pushAudioFx(audioFx, next, dynamicAudio);
-  };
+  }, [monoAudio, audioFx, dynamicAudio, pushAudioFx]);
 
-  const handleDynamicAudioChange = (next: DynamicAudioState) => {
+  const handleDynamicAudioChange = useCallback((next: DynamicAudioState) => {
     setDynamicAudio(next);
     pushAudioFx(audioFx, monoAudio, next);
-  };
+  }, [audioFx, monoAudio, pushAudioFx]);
 
-  const handleAudioFxChange = (next: AudioFxState) => {
+  const handleAudioFxChange = useCallback((next: AudioFxState) => {
     setAudioFx(next);
     pushAudioFx(next, monoAudio, dynamicAudio);
-  };
+  }, [monoAudio, dynamicAudio, pushAudioFx]);
 
   const handleSubtitleStyleChange = (style: SubtitleStyle) => {
     setSubtitleStyle(style);
-    invoke("set_subtitle_style", { style }).catch((e) => setError(String(e)));
+    invoke("set_subtitle_style", { style }).catch(logErr("set_subtitle_style"));
   };
 
   const handleSubtitleDelayChange = (delayMs: number) => {
     setSubtitleDelay(delayMs);
-    invoke("set_subtitle_delay", { delayMs }).catch((e) => setError(String(e)));
+    invoke("set_subtitle_delay", { delayMs }).catch(logErr("set_subtitle_delay"));
   };
 
-  const handleOpenSubtitlePanel = () => {
-    setPlaylistOpen(false);
+  const handleOpenSubtitlePanel = useCallback(() => {
     setSubtitlePanelOpen(true);
-  };
+  }, []);
 
-  const handleImageParamsChange = (p: ImageParams) => {
+  const handleImageParamsChange = useCallback((p: ImageParams) => {
     setImageParams(p);
-    invoke("set_image_params", { params: p }).catch((e) => setError(String(e)));
-  };
+    invoke("set_image_params", { params: p }).catch(logErr("set_image_params"));
+  }, []);
 
-  const handleVideoStateChange = (next: VideoState) => {
+  const handleVideoStateChange = useCallback((next: VideoState) => {
     if (next.aspect !== videoState.aspect) {
-      invoke("set_aspect", { ratio: next.aspect }).catch((e) => setError(String(e)));
+      invoke("set_aspect", { ratio: next.aspect }).catch(logErr("set_aspect"));
     }
     if (next.zoom !== videoState.zoom) {
-      invoke("set_zoom", { zoom: next.zoom }).catch((e) => setError(String(e)));
+      invoke("set_zoom", { zoom: next.zoom }).catch(logErr("set_zoom"));
     }
     if (next.rotate !== videoState.rotate) {
-      invoke("set_rotate", { degrees: next.rotate }).catch((e) => setError(String(e)));
+      invoke("set_rotate", { degrees: next.rotate }).catch(logErr("set_rotate"));
     }
     setVideoState(next);
-  };
+  }, [videoState]);
 
   // Manual fine-grain knobs. When the user touches any of these directly,
   // the Performance profile flips to "custom" so the umbrella stops
@@ -1771,37 +1810,37 @@ export default function App() {
     if (perfProfile !== "custom") setPerfProfile("custom");
   };
 
-  const handleHdrModeChange = (m: HdrMode) => {
+  const handleHdrModeChange = useCallback((m: HdrMode) => {
     setHdrMode(m);
     markCustomIfManaged();
-    invoke("set_hdr_mode", { mode: m }).catch((e) => setError(String(e)));
-  };
+    invoke("set_hdr_mode", { mode: m }).catch(logErr("set_hdr_mode"));
+  }, [perfProfile]);
 
-  const handleUpscalingChange = (p: UpscalingProfile) => {
+  const handleUpscalingChange = useCallback((p: UpscalingProfile) => {
     setUpscaling(p);
     markCustomIfManaged();
-    invoke("set_upscaling", { profile: p }).catch((e) => setError(String(e)));
-  };
+    invoke("set_upscaling", { profile: p }).catch(logErr("set_upscaling"));
+  }, [perfProfile]);
 
-  const handleInterpolationChange = (m: InterpolationMode) => {
+  const handleInterpolationChange = useCallback((m: InterpolationMode) => {
     setInterpolation(m);
     markCustomIfManaged();
-    invoke("set_interpolation", { mode: m }).catch((e) => setError(String(e)));
-  };
+    invoke("set_interpolation", { mode: m }).catch(logErr("set_interpolation"));
+  }, [perfProfile]);
 
-  const handleVsyncChange = (b: boolean) => {
+  const handleVsyncChange = useCallback((b: boolean) => {
     setVsync(b);
     markCustomIfManaged();
-    invoke("set_vsync", { enabled: b }).catch((e) => setError(String(e)));
-  };
+    invoke("set_vsync", { enabled: b }).catch(logErr("set_vsync"));
+  }, [perfProfile]);
 
   // Not gated on perf profile — exclusive fullscreen is a presentation-mode
   // choice, orthogonal to the perf profile umbrella's quality/power knobs.
-  const handleExclusiveFullscreenChange = (b: boolean) => {
+  const handleExclusiveFullscreenChange = useCallback((b: boolean) => {
     setExclusiveFullscreen(b);
-  };
+  }, []);
 
-  const handlePerfProfileChange = (p: PerfProfileName) => {
+  const handlePerfProfileChange = useCallback((p: PerfProfileName) => {
     setPerfProfile(p);
     invoke<ResolvedPerf | null>("set_perf_profile", { profile: p })
       .then((resolved) => {
@@ -1813,8 +1852,15 @@ export default function App() {
           setVsync(resolved.vsync);
         }
       })
-      .catch((e) => setError(String(e)));
-  };
+      .catch(logErr("set_perf_profile"));
+  }, []);
+
+  // Stable callbacks for ControlBar props that were previously inline arrows.
+  const openMediaInfo = useCallback(() => setMediaInfoOpen(true), []);
+  const openJumpToTime = useCallback(() => setJumpToTimeOpen(true), []);
+  const openSourceNetwork = useCallback(() => setOpenSourceOpen(true), []);
+  const openSourceRecent = useCallback(() => setRecentPanelOpen(true), []);
+  const openLibrary = useCallback(() => setLibraryOpen(true), []);
 
   return (
     <div
@@ -1825,7 +1871,7 @@ export default function App() {
     >
       {/* Pointer-event overlay (touch + mouse). Replaces the simple click-to-play div. */}
       <GestureLayer
-        enabled={hasFile && !subtitlePanelOpen && !playlistOpen && !jumpToTimeOpen && !mediaInfoOpen}
+        enabled={hasFile && !subtitlePanelOpen && !jumpToTimeOpen && !mediaInfoOpen}
         duration={duration}
         brightness={imageParams.brightness}
         zoom={videoState.zoom}
@@ -2039,7 +2085,7 @@ export default function App() {
         {hasFile && pipMode && (
           <PipBar
             isPlaying={isPlaying}
-            progress={progress}
+            progressRef={progressRef}
             onPlayPause={playPause}
             onExitPip={togglePip}
             onSeekCommit={seekAbsolutePct}
@@ -2054,8 +2100,8 @@ export default function App() {
             isPlaying={isPlaying}
             volume={volume}
             isMuted={isMuted}
-            progress={progress}
-            currentTime={currentTime}
+            progressRef={progressRef}
+            currentTime={displayTime}
             duration={duration}
             playbackSpeed={playbackSpeed}
             isFullscreen={isFullscreen}
@@ -2089,8 +2135,8 @@ export default function App() {
             onAppearanceChange={setAppearance}
             alwaysOnTop={alwaysOnTop}
             onAlwaysOnTopToggle={handleAlwaysOnTopToggle}
-            onMediaInfo={() => setMediaInfoOpen(true)}
-            onJumpToTime={() => setJumpToTimeOpen(true)}
+            onMediaInfo={openMediaInfo}
+            onJumpToTime={openJumpToTime}
             onFrameStep={handleFrameStep}
             onLoopCycle={cycleLoop}
             onPlaylistToggle={togglePlaylistPanel}
@@ -2127,9 +2173,9 @@ export default function App() {
             onHoverChange={handleBarHoverChange}
             onOpenFile={handleOpenFile}
             onSourceLocal={handleOpenFile}
-            onSourceNetwork={() => setOpenSourceOpen(true)}
-            onSourceRecent={() => setRecentPanelOpen(true)}
-            onLibraryOpen={() => setLibraryOpen(true)}
+            onSourceNetwork={openSourceNetwork}
+            onSourceRecent={openSourceRecent}
+            onLibraryOpen={openLibrary}
             showThumbnails={isLocalFile && hoverPreview}
           />
         )}
@@ -2146,20 +2192,7 @@ export default function App() {
         onLoadSubtitle={handleLoadSubtitle}
       />
 
-      <PlaylistPanel
-        open={playlistOpen}
-        onClose={() => setPlaylistOpen(false)}
-        items={playlist}
-        loopPlaylist={loopMode === "playlist"}
-        onAdd={handleAddPlaylistFiles}
-        onAddUrl={() => setOpenSourceOpen(true)}
-        onClear={handlePlaylistClear}
-        onShuffle={handlePlaylistShuffle}
-        onLoopPlaylistToggle={handleLoopPlaylistToggleFromPanel}
-        onPlayIndex={handlePlaylistPlayIndex}
-        onRemove={handlePlaylistRemove}
-        onMove={handlePlaylistMove}
-      />
+      {/* Playlist is now embedded in LibraryModal as a right-side panel */}
 
       <OpenSourceDialog
         open={openSourceOpen}
@@ -2190,7 +2223,7 @@ export default function App() {
           setRecentFiles([]);
           if (storeRef.current) {
             await storeRef.current.set("recentFiles", []);
-            await storeRef.current.save();
+            saveStore();
           }
         }}
         onClose={() => setRecentPanelOpen(false)}
@@ -2208,6 +2241,11 @@ export default function App() {
           setLibraryOpen(false);
           void handleOpenSource(magnet, false, fileIndex);
         }}
+        playlist={playlist}
+        onPlaylistPlayIndex={handlePlaylistPlayIndex}
+        onPlaylistRemove={handlePlaylistRemove}
+        onPlaylistClear={handlePlaylistClear}
+        onPlaylistMove={handlePlaylistMove}
       />
 
       {/* Jump to time dialog */}
@@ -2216,9 +2254,10 @@ export default function App() {
         duration={duration}
         onSeek={(s) => {
           seekTargetRef.current = s;
-          setCurrentTime(s);
-          if (duration > 0) setProgress((s / duration) * 100);
-          invoke("seek", { seconds: s, mode: "absolute" }).catch(() => {});
+          currentTimeRef.current = s;
+          setDisplayTime(s);
+          if (duration > 0) progressRef.current = (s / duration) * 100;
+          invoke("seek", { seconds: s, mode: "absolute" }).catch(logErr("seek"));
         }}
         onClose={() => setJumpToTimeOpen(false)}
       />
@@ -2262,12 +2301,13 @@ export default function App() {
         subtitleTracks={subtitleTracks}
         selectedAudioId={selectedAudio}
         selectedSubId={selectedSub}
-        disabled={libraryOpen || subtitlePanelOpen || playlistOpen || jumpToTimeOpen || mediaInfoOpen || openSourceOpen || recentPanelOpen}
+        disabled={libraryOpen || subtitlePanelOpen || jumpToTimeOpen || mediaInfoOpen || openSourceOpen || recentPanelOpen}
         onPlayPause={playPause}
         onSpeedChange={handleSpeedChange}
         onAudioTrackChange={handleAudioTrackChange}
         onSubtitleTrackChange={handleSubtitleTrackChange}
         onMediaInfo={() => setMediaInfoOpen(true)}
+        onAddToPlaylist={hasFile ? handleAddPlaylistFiles : undefined}
       />
 
       {/* Dev-only: command tester (only mounted in `npm run dev`) */}

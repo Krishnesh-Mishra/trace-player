@@ -1,3 +1,10 @@
+// Path validation pattern:
+// All Tauri commands that accept a file/directory path from the frontend MUST call
+// `is_path_allowed()` before performing any filesystem operation. This prevents
+// path-traversal attacks where malicious JS in the WebView could read arbitrary
+// files. Allowed locations: user home directory, system temp directory.
+// This same pattern should be applied to `set_screenshot_dir` in commands.rs.
+
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -6,6 +13,23 @@ use tauri::{AppHandle, Manager};
 
 use crate::state::AppState;
 use crate::thumbnailer;
+
+/// Validates that the given path resides within an allowed directory (user home
+/// or system temp). Returns `Ok(())` if access is permitted, or an error string
+/// describing why access was denied.
+fn is_path_allowed(path: &Path) -> Result<(), String> {
+    let canonical = path.canonicalize().map_err(|e| e.to_string())?;
+    let home = dirs::home_dir().ok_or("cannot determine home dir")?;
+    // Allow anything under the user's home directory
+    if canonical.starts_with(&home) {
+        return Ok(());
+    }
+    // Allow temp directory (for thumbnails)
+    if canonical.starts_with(std::env::temp_dir()) {
+        return Ok(());
+    }
+    Err(format!("access denied: {}", canonical.display()))
+}
 
 const VIDEO_EXTS: &[&str] = &[
     "mp4", "mkv", "avi", "mov", "webm", "m4v", "ts", "flv", "wmv", "mpg", "mpeg", "ogv", "3gp",
@@ -85,6 +109,7 @@ pub async fn generate_library_thumb(
 
 #[tauri::command]
 pub fn read_thumb_base64(path: String) -> Result<String, String> {
+    is_path_allowed(Path::new(&path))?;
     use base64::{engine::general_purpose, Engine as _};
     let bytes = std::fs::read(&path).map_err(|e| format!("read thumb: {e}"))?;
     Ok(general_purpose::STANDARD.encode(&bytes))
@@ -100,6 +125,7 @@ pub struct FileMetaInfo {
 
 #[tauri::command]
 pub fn get_file_metadata(path: String) -> Result<FileMetaInfo, String> {
+    is_path_allowed(Path::new(&path))?;
     let meta = std::fs::metadata(&path).map_err(|e| format!("metadata: {e}"))?;
     let created = meta
         .created()
@@ -140,6 +166,7 @@ pub async fn probe_video_info(
 #[tauri::command]
 pub async fn read_directory_videos(path: String) -> Result<Vec<DirVideo>, String> {
     let dir = PathBuf::from(&path);
+    is_path_allowed(&dir)?;
     if !dir.is_dir() {
         return Err(format!("not a directory: {path}"));
     }

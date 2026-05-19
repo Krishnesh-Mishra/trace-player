@@ -53,8 +53,9 @@ pub struct SmtcController {
     last_status: Mutex<Option<bool>>,
 }
 
-unsafe impl Send for SmtcController {}
-unsafe impl Sync for SmtcController {}
+// SmtcController wraps apartment-threaded COM objects. It is created and
+// used entirely on the worker thread in lib.rs — it never crosses thread
+// boundaries. No Send/Sync impl is needed or provided.
 
 impl SmtcController {
     pub fn new(hwnd_raw: isize, tx: Sender<SmtcCommand>) -> Result<Self, String> {
@@ -189,11 +190,40 @@ impl SmtcController {
     }
 }
 
-/// Read a function pointer from a COM object's vtable. The first machine-word
-/// at `obj` is a pointer to an array of fn pointers; the Nth slot is the Nth
-/// method. Caller must specify a `T` matching that method's signature.
+/// Read a function pointer from a COM object's vtable.
+///
+/// COM objects begin with a pointer to a vtable (an array of function
+/// pointers). The layout for the interfaces used here is:
+///
+///   IUnknown (slots 0-2):
+///     0 = QueryInterface
+///     1 = AddRef
+///     2 = Release
+///
+///   IInspectable (slots 3-5, extends IUnknown):
+///     3 = GetIids
+///     4 = GetRuntimeClassName
+///     5 = GetTrustLevel
+///
+///   ISystemMediaTransportControlsInterop (slot 6, extends IInspectable):
+///     6 = GetForWindow
+///
+/// # Safety
+///
+/// - `obj` must be a valid, non-null COM interface pointer whose vtable
+///   has at least `slot + 1` entries.
+/// - `T` must match the function signature at the given slot.
+///
+/// # Panics
+///
+/// Panics if `obj` is null.
 unsafe fn read_vtable_slot<T: Copy>(obj: *mut c_void, slot: usize) -> T {
+    assert!(!obj.is_null(), "read_vtable_slot: obj pointer is null");
     let vtbl = *(obj as *mut *mut *const c_void);
+    assert!(
+        !vtbl.is_null(),
+        "read_vtable_slot: vtable pointer is null"
+    );
     let raw = *vtbl.add(slot);
     std::mem::transmute_copy::<*const c_void, T>(&raw)
 }

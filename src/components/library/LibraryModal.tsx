@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X } from "lucide-react";
+import { X, Play, GripVertical, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useLibrary } from "./useLibrary";
 import LibrarySidebar from "./LibrarySidebar";
@@ -9,12 +9,18 @@ import LibraryExploreView from "./LibraryExploreView";
 import DownloadsView from "./DownloadsView";
 import ImportDialog from "./ImportDialog";
 import type { LibraryItem, PinnedEntry } from "./types";
+import type { PlaylistItem } from "../types";
 
 interface Props {
   open: boolean;
   onClose: () => void;
   onPlayFile: (path: string) => void;
   onPlayTorrent: (magnet: string, fileIndex?: number) => void;
+  playlist: PlaylistItem[];
+  onPlaylistPlayIndex: (idx: number) => void;
+  onPlaylistRemove: (idx: number) => void;
+  onPlaylistClear: () => void;
+  onPlaylistMove: (from: number, to: number) => void;
 }
 
 export default function LibraryModal({
@@ -22,6 +28,11 @@ export default function LibraryModal({
   onClose,
   onPlayFile,
   onPlayTorrent,
+  playlist,
+  onPlaylistPlayIndex,
+  onPlaylistRemove,
+  onPlaylistClear,
+  onPlaylistMove,
 }: Props) {
   const lib = useLibrary(open);
   const [importOpen, setImportOpen] = useState(false);
@@ -77,6 +88,8 @@ export default function LibraryModal({
     [handleItemPlay],
   );
 
+  const hasPlaylist = playlist.length > 0;
+
   return (
     <AnimatePresence>
       {open && (
@@ -102,9 +115,10 @@ export default function LibraryModal({
           >
             <button
               onClick={onClose}
-              className="absolute top-3 right-3 z-10 w-7 h-7 flex items-center justify-center
+              className={`absolute top-3 z-10 w-7 h-7 flex items-center justify-center
                          text-white/30 hover:text-white/70 rounded-lg hover:bg-white/10
-                         cursor-pointer transition-colors duration-100"
+                         cursor-pointer transition-colors duration-100
+                         ${hasPlaylist ? "right-[282px]" : "right-3"}`}
             >
               <X className="w-4 h-4" />
             </button>
@@ -157,6 +171,16 @@ export default function LibraryModal({
               />
             )}
 
+            {hasPlaylist && (
+              <PlaylistSidePanel
+                items={playlist}
+                onPlayIndex={onPlaylistPlayIndex}
+                onRemove={onPlaylistRemove}
+                onClear={onPlaylistClear}
+                onMove={onPlaylistMove}
+              />
+            )}
+
             <ImportDialog
               open={importOpen}
               onClose={() => setImportOpen(false)}
@@ -168,4 +192,167 @@ export default function LibraryModal({
       )}
     </AnimatePresence>
   );
+}
+
+// ── Embedded Playlist Panel ──────────────────────────────────────────────────
+
+interface PlaylistSidePanelProps {
+  items: PlaylistItem[];
+  onPlayIndex: (idx: number) => void;
+  onRemove: (idx: number) => void;
+  onClear: () => void;
+  onMove: (from: number, to: number) => void;
+}
+
+function PlaylistSidePanel({
+  items,
+  onPlayIndex,
+  onRemove,
+  onClear,
+  onMove,
+}: PlaylistSidePanelProps) {
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dropIdx, setDropIdx] = useState<number | null>(null);
+  const [clearConfirm, setClearConfirm] = useState(false);
+  const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Two-click clear: first click shows "Confirm?", revert after 3s
+  const handleClear = useCallback(() => {
+    if (clearConfirm) {
+      onClear();
+      setClearConfirm(false);
+      if (clearTimerRef.current) {
+        clearTimeout(clearTimerRef.current);
+        clearTimerRef.current = null;
+      }
+    } else {
+      setClearConfirm(true);
+      clearTimerRef.current = setTimeout(() => {
+        setClearConfirm(false);
+        clearTimerRef.current = null;
+      }, 3000);
+    }
+  }, [clearConfirm, onClear]);
+
+  useEffect(() => {
+    return () => {
+      if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
+    };
+  }, []);
+
+  const handleDrop = (toIdx: number) => {
+    if (dragIdx === null || dragIdx === toIdx) {
+      setDragIdx(null);
+      setDropIdx(null);
+      return;
+    }
+    // Pass raw indices — App.tsx handlePlaylistMove does the mpv adjustment
+    onMove(dragIdx, toIdx);
+    setDragIdx(null);
+    setDropIdx(null);
+  };
+
+  return (
+    <div className="w-[270px] h-full bg-[#0a0a0a] flex flex-col shrink-0">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 h-12 shrink-0">
+        <h2 className="text-[11px] font-semibold text-white/50 uppercase tracking-wider">
+          Playlist
+          <span className="ml-2 text-[10px] text-white/30 tabular-nums normal-case">
+            {items.length}
+          </span>
+        </h2>
+        <button
+          onClick={handleClear}
+          className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] cursor-pointer
+                     transition-colors duration-100 ${
+                       clearConfirm
+                         ? "bg-red-500/15 text-red-400"
+                         : "text-white/40 hover:text-red-300 hover:bg-red-500/10"
+                     }`}
+        >
+          <Trash2 className="w-3 h-3" />
+          <span>{clearConfirm ? "Confirm?" : "Clear"}</span>
+        </button>
+      </div>
+
+      {/* Scrollable list */}
+      <div className="flex-1 overflow-y-auto py-1 px-1.5">
+        <ul className="space-y-px">
+          {items.map((item, i) => (
+            <li
+              key={`${item.index}-${i}`}
+              draggable
+              onDragStart={() => setDragIdx(i)}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (dropIdx !== i) setDropIdx(i);
+              }}
+              onDragEnd={() => {
+                setDragIdx(null);
+                setDropIdx(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                handleDrop(i);
+              }}
+              className={`group relative flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer
+                          transition-colors duration-100 select-none
+                          ${item.current
+                            ? "bg-[var(--np-accent-soft)]"
+                            : "hover:bg-white/6"
+                          }
+                          ${dropIdx === i && dragIdx !== i
+                            ? "bg-white/8"
+                            : ""
+                          }
+                          ${dragIdx === i ? "opacity-40" : ""}`}
+              onClick={() => onPlayIndex(item.index)}
+            >
+              <GripVertical className="w-3 h-3 text-white/20 shrink-0 cursor-grab" />
+              <div className="w-4 h-4 flex items-center justify-center shrink-0">
+                {item.current ? (
+                  <div className="w-1.5 h-1.5 rounded-full bg-[var(--np-accent)]" />
+                ) : (
+                  <Play className="w-3 h-3 text-white/30 opacity-0 group-hover:opacity-100 transition-opacity duration-100" />
+                )}
+              </div>
+              <p
+                className={`flex-1 min-w-0 text-[11px] truncate ${
+                  item.current ? "text-white font-medium" : "text-white/70"
+                }`}
+                title={item.filename}
+              >
+                {item.title || displayName(item.filename)}
+              </p>
+              <button
+                className="w-4 h-4 flex items-center justify-center text-white/20
+                           hover:text-red-400 opacity-0 group-hover:opacity-100
+                           transition-opacity duration-100 shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(i);
+                }}
+                title="Remove"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+/** Last path segment, decoded if URL-encoded. */
+function displayName(p: string): string {
+  if (!p) return "(unknown)";
+  const slash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  const tail = slash >= 0 ? p.slice(slash + 1) : p;
+  try {
+    return decodeURIComponent(tail);
+  } catch {
+    return tail;
+  }
 }

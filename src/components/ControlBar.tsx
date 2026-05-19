@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, memo } from "react";
+import React from "react";
 import { motion } from "framer-motion";
 import {
   Settings,
@@ -65,7 +66,7 @@ interface ControlBarProps {
   isPlaying: boolean;
   volume: number;
   isMuted: boolean;
-  progress: number;
+  progressRef: React.RefObject<number>;
   currentTime: number;
   duration: number;
   playbackSpeed: number;
@@ -144,12 +145,12 @@ interface ControlBarProps {
   showThumbnails?: boolean;
 }
 
-export default function ControlBar(props: ControlBarProps) {
+const ControlBar = memo(function ControlBar(props: ControlBarProps) {
   const {
     isPlaying,
     volume,
     isMuted,
-    progress,
+    progressRef,
     currentTime,
     duration,
     playbackSpeed,
@@ -266,7 +267,7 @@ export default function ControlBar(props: ControlBarProps) {
   // Hoisted JSX: the three reusable pieces that shuffle around for the
   // small-vs-centered layouts. Declared once so the two return paths below
   // share identical buttons (no drift between layouts).
-  const TimeBadges = (
+  const TimeBadges = useMemo(() => (
     <div className="flex items-center gap-1 text-xs text-white/50 tabular-nums">
       <span className="text-white/80">{fmtTime(currentTime)}</span>
       <span>/</span>
@@ -282,9 +283,9 @@ export default function ControlBar(props: ControlBarProps) {
         </span>
       )}
     </div>
-  );
+  ), [currentTime, duration, showHdrBadge, showExtras, hdrInfo]);
 
-  const ExtraControls = showExtras && (
+  const ExtraControls = useMemo(() => showExtras && (
     <>
       <motion.button
         className={`${btnSize} flex items-center justify-center rounded-lg
@@ -295,6 +296,7 @@ export default function ControlBar(props: ControlBarProps) {
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}
         onClick={onLoopCycle}
+        aria-label="Loop"
         title={
           loopMode === "off"
             ? "Loop off — click to loop file"
@@ -313,6 +315,7 @@ export default function ControlBar(props: ControlBarProps) {
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}
         onClick={onPlaylistToggle}
+        aria-label="Playlist"
         title="Playlist"
       >
         <ListVideo className={iconSize} />
@@ -337,6 +340,7 @@ export default function ControlBar(props: ControlBarProps) {
             whileHover={{ scale: 1.08 }}
             whileTap={{ scale: 0.88 }}
             onClick={onScreenshot}
+            aria-label="Screenshot"
             title="Screenshot (S)"
           >
             <Camera className={iconSize} />
@@ -349,6 +353,7 @@ export default function ControlBar(props: ControlBarProps) {
             whileHover={{ scale: 1.08 }}
             whileTap={{ scale: 0.88 }}
             onClick={onJumpToTime}
+            aria-label="Jump to time"
             title="Jump to time (G)"
           >
             <Timer className={iconSize} />
@@ -361,6 +366,7 @@ export default function ControlBar(props: ControlBarProps) {
             whileHover={{ scale: 1.08 }}
             whileTap={{ scale: 0.88 }}
             onClick={onMediaInfo}
+            aria-label="Media info"
             title="Media info (I)"
           >
             <Info className={iconSize} />
@@ -368,9 +374,11 @@ export default function ControlBar(props: ControlBarProps) {
         </>
       )}
     </>
-  );
+  ), [showExtras, showFullExtras, loopActive, loopMode, LoopIcon, playlistCount,
+      onLoopCycle, onPlaylistToggle, onScreenshot, onJumpToTime, onMediaInfo,
+      btnSize, iconSize]);
 
-  const VolumeAndFsAndSettings = (
+  const VolumeAndFsAndSettings = useMemo(() => (
     <>
       <VolumeControl
         volume={volume}
@@ -388,6 +396,7 @@ export default function ControlBar(props: ControlBarProps) {
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}
         onClick={onLibraryOpen}
+        aria-label="Library"
         title="Library"
       >
         <Library className={iconSize} />
@@ -400,6 +409,7 @@ export default function ControlBar(props: ControlBarProps) {
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}
         onClick={onFullscreenToggle}
+        aria-label="Fullscreen"
         title="Fullscreen (F)"
       >
         {isFullscreen ? (
@@ -418,6 +428,7 @@ export default function ControlBar(props: ControlBarProps) {
           whileHover={{ scale: 1.08 }}
           whileTap={{ scale: 0.88 }}
           onClick={() => setSettingsOpen((o) => !o)}
+          aria-label="Settings"
           title="Settings"
         >
           <motion.div
@@ -492,7 +503,22 @@ export default function ControlBar(props: ControlBarProps) {
         />
       </div>
     </>
-  );
+  ), [volume, isMuted, isFullscreen, settingsOpen, onMuteToggle, onVolumeChange,
+      onLibraryOpen, onFullscreenToggle, playbackSpeed, onSpeedChange,
+      audioTracks, subtitleTracks, selectedAudioId, selectedSubId,
+      onAudioTrackChange, onSubtitleTrackChange, onOpenSubtitlePanel,
+      monoAudio, dynamicAudio, onMonoAudioToggle, onDynamicAudioChange,
+      imageParams, videoState, onImageParamsChange, onVideoStateChange,
+      hdrMode, hdrInfo, onHdrModeChange, upscaling, onUpscalingChange,
+      interpolation, vsync, exclusiveFullscreen, onInterpolationChange,
+      onVsyncChange, onExclusiveFullscreenChange, perfProfile, perfEffective,
+      onBattery, screenshotDir, onPerfProfileChange, onPickScreenshotDir,
+      audioFx, onAudioFxChange, appearance, onAppearanceChange,
+      deinterlace, onDeinterlaceToggle, audioDevice, onAudioDeviceChange,
+      loopMode, onLoopCycle, playlistCount, onPlaylistToggle, onScreenshot,
+      abLoopActive, onAbLoopCycle, alwaysOnTop, onAlwaysOnTopToggle,
+      onJumpToTime, onMediaInfo, onSourceLocal, onSourceNetwork, onSourceRecent,
+      barSize, btnSize, iconSize]);
 
   return (
     <motion.div
@@ -514,7 +540,7 @@ export default function ControlBar(props: ControlBarProps) {
                    rounded-2xl px-4 pt-3 pb-3`}
       >
         <Timeline
-          progress={progress}
+          progressRef={progressRef}
           duration={duration}
           onSeek={onSeek}
           onSeekCommit={onSeekCommit}
@@ -569,4 +595,6 @@ export default function ControlBar(props: ControlBarProps) {
       </div>
     </motion.div>
   );
-}
+});
+
+export default ControlBar;
