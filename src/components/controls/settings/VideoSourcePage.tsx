@@ -33,25 +33,25 @@ const ENTRIES: {
 }[] = [
   {
     id: "library",
-    icon: <Library className="w-4 h-4 text-white/70" />,
+    icon: <Library className="w-4 h-4 text-[var(--np-text-secondary)]" />,
     label: "Library",
     desc: "Browse your saved videos and torrents (B)",
   },
   {
     id: "local",
-    icon: <FolderOpen className="w-4 h-4 text-white/70" />,
+    icon: <FolderOpen className="w-4 h-4 text-[var(--np-text-secondary)]" />,
     label: "Local file",
     desc: "Video, audio, or archive (.zip / .7z / .rar)",
   },
   {
     id: "network",
-    icon: <Globe className="w-4 h-4 text-white/70" />,
+    icon: <Globe className="w-4 h-4 text-[var(--np-text-secondary)]" />,
     label: "Network source",
     desc: "Magnet link, .torrent file, or HTTP / RTSP / RTMP stream",
   },
   {
     id: "recent",
-    icon: <Clock className="w-4 h-4 text-white/70" />,
+    icon: <Clock className="w-4 h-4 text-[var(--np-text-secondary)]" />,
     label: "Recent",
     desc: "Recently opened sources",
   },
@@ -106,21 +106,21 @@ export default function VideoSourcePage({
             key={e.id}
             onClick={() => handlers[e.id]()}
             className="w-full flex items-start gap-2.5 px-3 py-2.5
-                       text-sm text-white/90 rounded-lg hover:bg-white/10 cursor-pointer
+                       text-sm text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                        transition-colors duration-100"
           >
             <span className="mt-0.5">{e.icon}</span>
             <span className="flex flex-col items-start text-left">
               <span>{e.label}</span>
-              <span className="text-[9px] text-white/40 mt-0.5">{e.desc}</span>
+              <span className="text-[9px] text-[var(--np-text-tertiary)] mt-0.5">{e.desc}</span>
             </span>
           </button>
         ))}
 
-        <div className="border-t border-white/8 mt-1 pt-2 px-2">
+        <div className="border-t border-[var(--np-divider)] mt-1 pt-2 px-2">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] text-white/60">Max disc cache</span>
-            <span className="text-[11px] text-white/90 font-medium">
+            <span className="text-[11px] text-[var(--np-text-secondary)]">Max disc cache</span>
+            <span className="text-[11px] text-[var(--np-text)] font-medium">
               {CACHE_PRESETS.find((p) => p.bytes === cacheLimit)?.label ?? "Custom"}
             </span>
           </div>
@@ -131,15 +131,15 @@ export default function VideoSourcePage({
                 onClick={() => applyLimit(preset.bytes)}
                 className={`px-1.5 py-1 text-[10px] rounded-md transition-colors duration-100
                   ${cacheLimit === preset.bytes
-                    ? "bg-white/20 text-white font-medium"
-                    : "bg-white/5 text-white/55 hover:bg-white/12 hover:text-white/80"
+                    ? "bg-[var(--np-selected)] text-[var(--np-text)] font-medium"
+                    : "bg-[var(--np-hover)] text-[var(--np-text-tertiary)] hover:bg-[var(--np-active)] hover:text-[var(--np-text)]"
                   }`}
               >
                 {preset.label}
               </button>
             ))}
           </div>
-          <p className="text-[9px] text-white/30 mt-1.5 leading-snug">
+          <p className="text-[9px] text-[var(--np-text-muted)] mt-1.5 leading-snug">
             Oldest torrent data is deleted when this limit is exceeded.
           </p>
         </div>

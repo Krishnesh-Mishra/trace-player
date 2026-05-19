@@ -167,17 +167,17 @@ export default function BufferingBanner({
             exit={{ scale: 0.96, y: 4 }}
             transition={{ type: "spring", stiffness: 380, damping: 28 }}
             className="flex flex-col items-center gap-3 px-6 py-5
-                       bg-[#111]/85 backdrop-blur-xl 
+                       bg-[var(--np-overlay)] backdrop-blur-xl 
                        rounded-2xl shadow-2xl"
           >
-            <Loader2 className="w-6 h-6 text-white/85 animate-spin" />
+            <Loader2 className="w-6 h-6 text-[var(--np-text)] animate-spin" />
 
             {!seekOnly && (
               <div className="flex flex-col items-center gap-1 w-full min-w-[200px] max-w-[320px]">
-                <span className="text-[11px] uppercase tracking-wider text-white/45">
+                <span className="text-[11px] uppercase tracking-wider text-[var(--np-text-tertiary)]">
                   Buffering
                 </span>
-                <span className="text-xs text-white/75 text-center">
+                <span className="text-xs text-[var(--np-text)] text-center">
                   {isTorrent
                     ? speed ? `Downloading at ${speed}` : "Waiting for peers…"
                     : "Fetching content…"}
@@ -201,8 +201,8 @@ export default function BufferingBanner({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col items-center">
-      <span className="text-[9px] uppercase tracking-wider text-white/35">{label}</span>
-      <span className="text-[11px] text-white/80 font-medium tabular-nums">{value}</span>
+      <span className="text-[9px] uppercase tracking-wider text-[var(--np-text-muted)]">{label}</span>
+      <span className="text-[11px] text-[var(--np-text)] font-medium tabular-nums">{value}</span>
     </div>
   );
 }

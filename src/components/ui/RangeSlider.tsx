@@ -76,9 +76,9 @@ export default function RangeSlider({ value, min, max, step, onChange, label }: 
       }}
       onPointerUp={() => setDragging(false)}
     >
-      <div className="w-full h-[3px] rounded-full bg-white/20 relative">
+      <div className="w-full h-[3px] rounded-full bg-[var(--np-selected)] relative">
         <div
-          className="absolute inset-y-0 left-0 bg-white/85 rounded-full"
+          className="absolute inset-y-0 left-0 bg-[var(--np-text)] rounded-full"
           style={{ width: `${pct}%` }}
         />
         <div

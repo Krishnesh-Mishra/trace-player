@@ -69,7 +69,7 @@ export default function DeleteConfirmDialog({ open, name, isFolder, onConfirm, o
             role="dialog"
             aria-modal="true"
             aria-label="Delete confirmation"
-            className="relative bg-[#141414]  rounded-xl shadow-2xl
+            className="relative bg-[var(--np-surface)] rounded-xl shadow-2xl
                        w-[320px] p-4"
             initial={{ scale: 0.92 }}
             animate={{ scale: 1 }}
@@ -81,18 +81,18 @@ export default function DeleteConfirmDialog({ open, name, isFolder, onConfirm, o
               <div className="w-8 h-8 rounded-lg bg-red-500/15 flex items-center justify-center">
                 <Trash2 className="w-4 h-4 text-red-400" />
               </div>
-              <h3 className="text-sm font-medium text-white/90">Delete</h3>
+              <h3 className="text-sm font-medium text-[var(--np-text)]">Delete</h3>
             </div>
 
-            <p className="text-[11px] text-white/60 mb-4 leading-relaxed">
+            <p className="text-[11px] text-[var(--np-text-secondary)] mb-4 leading-relaxed">
               {isFolder ? (
                 <>
-                  Delete <span className="text-white/80 font-medium">"{name}"</span>?
+                  Delete <span className="text-[var(--np-text)] font-medium">"{name}"</span>?
                   Choose what happens to the items inside.
                 </>
               ) : (
                 <>
-                  Are you sure you want to delete <span className="text-white/80 font-medium">"{name}"</span>?
+                  Are you sure you want to delete <span className="text-[var(--np-text)] font-medium">"{name}"</span>?
                   This cannot be undone.
                 </>
               )}
@@ -101,8 +101,8 @@ export default function DeleteConfirmDialog({ open, name, isFolder, onConfirm, o
             <div className="flex gap-2 justify-end">
               <button
                 onClick={onCancel}
-                className="px-3 py-1.5 text-xs text-white/50 hover:text-white/80
-                           rounded-lg hover:bg-white/8 cursor-pointer
+                className="px-3 py-1.5 text-xs text-[var(--np-text-tertiary)] hover:text-[var(--np-text)]
+                           rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                            transition-colors duration-100"
               >
                 Cancel
@@ -111,8 +111,8 @@ export default function DeleteConfirmDialog({ open, name, isFolder, onConfirm, o
                 <>
                   <button
                     onClick={() => onConfirm("moveToParent")}
-                    className="px-3 py-1.5 text-xs font-medium text-white bg-white/10
-                               rounded-lg hover:bg-white/15 active:scale-95
+                    className="px-3 py-1.5 text-xs font-medium text-[var(--np-text)] bg-[var(--np-hover)]
+                               rounded-lg hover:bg-[var(--np-active)] active:scale-95
                                transition-all duration-100 cursor-pointer"
                   >
                     Move to Parent

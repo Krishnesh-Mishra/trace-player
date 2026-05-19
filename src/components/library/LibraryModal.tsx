@@ -8,6 +8,8 @@ import LibraryContent from "./LibraryContent";
 import LibraryExploreView from "./LibraryExploreView";
 import DownloadsView from "./DownloadsView";
 import ImportDialog from "./ImportDialog";
+import SettingsPanel from "./SettingsPanel";
+import type { SettingsBundle } from "./SettingsPanel";
 import type { LibraryItem, PinnedEntry } from "./types";
 import type { PlaylistItem } from "../types";
 
@@ -21,6 +23,8 @@ interface Props {
   onPlaylistRemove: (idx: number) => void;
   onPlaylistClear: () => void;
   onPlaylistMove: (from: number, to: number) => void;
+  settingsBundle?: SettingsBundle;
+  initialTab?: "settings" | null;
 }
 
 export default function LibraryModal({
@@ -33,10 +37,23 @@ export default function LibraryModal({
   onPlaylistRemove,
   onPlaylistClear,
   onPlaylistMove,
+  settingsBundle,
+  initialTab,
 }: Props) {
   const lib = useLibrary(open);
   const [importOpen, setImportOpen] = useState(false);
+  const [settingsActive, setSettingsActive] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (open && initialTab === "settings") {
+      setSettingsActive(true);
+    }
+  }, [open, initialTab]);
+
+  useEffect(() => {
+    if (!open) setSettingsActive(false);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -69,6 +86,28 @@ export default function LibraryModal({
       }
     },
     [],
+  );
+
+  const handleAddItemToPlaylist = useCallback(
+    (item: LibraryItem) => {
+      if (item.path) {
+        invoke("playlist_add", { path: item.path }).catch(() => {});
+      }
+    },
+    [],
+  );
+
+  const handleAddFolderToPlaylist = useCallback(
+    async (folderId: number) => {
+      const folderItems = await lib.getItemsInFolder(folderId);
+      const paths = folderItems
+        .filter((i) => i.path)
+        .map((i) => i.path as string);
+      if (paths.length > 0) {
+        invoke("playlist_add_many", { paths }).catch(() => {});
+      }
+    },
+    [lib],
   );
 
   const handlePinnedClick = useCallback(
@@ -104,7 +143,7 @@ export default function LibraryModal({
 
           <motion.div
             ref={modalRef}
-            className="relative w-[90vw] h-[90vh] bg-[#0c0c0c] rounded-2xl
+            className="relative w-[90vw] h-[90vh] bg-[var(--np-bg)] rounded-2xl
                        shadow-2xl overflow-hidden flex"
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
@@ -116,69 +155,83 @@ export default function LibraryModal({
             <button
               onClick={onClose}
               className={`absolute top-3 z-10 w-7 h-7 flex items-center justify-center
-                         text-white/30 hover:text-white/70 rounded-lg hover:bg-white/10
+                         text-[var(--np-text-muted)] hover:text-[var(--np-text-secondary)] rounded-lg hover:bg-[var(--np-hover)]
                          cursor-pointer transition-colors duration-100
-                         ${hasPlaylist ? "right-[282px]" : "right-3"}`}
+                         ${!settingsActive && hasPlaylist ? "right-[282px]" : "right-3"}`}
             >
               <X className="w-4 h-4" />
             </button>
 
             <LibrarySidebar
-              activeTab={lib.tab}
+              activeTab={settingsActive ? "settings" as any : lib.tab}
               onTabChange={(t) => {
-                lib.setTab(t);
-                lib.navigateToFolder(null);
+                if (t === "settings") {
+                  setSettingsActive(true);
+                } else {
+                  setSettingsActive(false);
+                  lib.setTab(t);
+                  lib.navigateToFolder(null);
+                }
               }}
               pinned={lib.pinned}
               onPinnedClick={handlePinnedClick}
               onUnpin={(id) => void lib.unpinItem(id)}
               getRecentItems={lib.getRecentItems}
               onRecentClick={handleRecentClick}
+              onSettingsClick={() => setSettingsActive(true)}
             />
 
-            {lib.tab === "explore" ? (
-              <LibraryExploreView onPlayFile={onPlayFile} />
-            ) : lib.tab === "downloads" ? (
-              <DownloadsView />
+            {settingsActive && settingsBundle ? (
+              <SettingsPanel settings={settingsBundle} />
             ) : (
-              <LibraryContent
-                tab={lib.tab}
-                breadcrumb={lib.breadcrumb}
-                folders={lib.folders}
-                items={lib.items}
-                loading={lib.loading}
-                searchQuery={lib.searchQuery}
-                onSearchChange={lib.setSearchQuery}
-                onNavigateFolder={lib.navigateToFolder}
-                onFolderOpen={(id) => lib.navigateToFolder(id)}
-                onItemPlay={handleItemPlay}
-                onItemDelete={(item) => void lib.deleteItem(item.id)}
-                onImport={() => setImportOpen(true)}
-                onCreateFolder={(name) => void lib.createFolder(name)}
-                onRenameItem={(id, title) => void lib.renameItem(id, title)}
-                onRenameFolder={(id, name) => void lib.renameFolder(id, name)}
-                onDeleteFolder={(id, mode) => void lib.deleteFolder(id, mode)}
-                onMoveItem={(id, target) => void lib.moveItem(id, target)}
-                onMoveFolder={(id, target) => void lib.moveFolder(id, target)}
-                onCopyItem={(id, target) => void lib.copyItem(id, target)}
-                onCopyFolder={(id, target) => void lib.copyFolder(id, target)}
-                currentFolderId={lib.folderId}
-                pinned={lib.pinned}
-                onPinFolder={(folderId, name) => void lib.pinItem("folder", name, folderId)}
-                onUnpinFolder={(pinnedId) => void lib.unpinItem(pinnedId)}
-                folderPreviews={lib.folderPreviews}
-                onDownloadTorrent={handleDownloadTorrent}
-              />
-            )}
+              <>
+                {lib.tab === "explore" ? (
+                  <LibraryExploreView onPlayFile={onPlayFile} />
+                ) : lib.tab === "downloads" ? (
+                  <DownloadsView />
+                ) : (
+                  <LibraryContent
+                    tab={lib.tab}
+                    breadcrumb={lib.breadcrumb}
+                    folders={lib.folders}
+                    items={lib.items}
+                    loading={lib.loading}
+                    searchQuery={lib.searchQuery}
+                    onSearchChange={lib.setSearchQuery}
+                    onNavigateFolder={lib.navigateToFolder}
+                    onFolderOpen={(id) => lib.navigateToFolder(id)}
+                    onItemPlay={handleItemPlay}
+                    onItemDelete={(item) => void lib.deleteItem(item.id)}
+                    onImport={() => setImportOpen(true)}
+                    onCreateFolder={(name) => void lib.createFolder(name)}
+                    onRenameItem={(id, title) => void lib.renameItem(id, title)}
+                    onRenameFolder={(id, name) => void lib.renameFolder(id, name)}
+                    onDeleteFolder={(id, mode) => void lib.deleteFolder(id, mode)}
+                    onMoveItem={(id, target) => void lib.moveItem(id, target)}
+                    onMoveFolder={(id, target) => void lib.moveFolder(id, target)}
+                    onCopyItem={(id, target) => void lib.copyItem(id, target)}
+                    onCopyFolder={(id, target) => void lib.copyFolder(id, target)}
+                    currentFolderId={lib.folderId}
+                    pinned={lib.pinned}
+                    onPinFolder={(folderId, name) => void lib.pinItem("folder", name, folderId)}
+                    onUnpinFolder={(pinnedId) => void lib.unpinItem(pinnedId)}
+                    folderPreviews={lib.folderPreviews}
+                    onDownloadTorrent={handleDownloadTorrent}
+                    onAddItemToPlaylist={handleAddItemToPlaylist}
+                    onAddFolderToPlaylist={handleAddFolderToPlaylist}
+                  />
+                )}
 
-            {hasPlaylist && (
-              <PlaylistSidePanel
-                items={playlist}
-                onPlayIndex={onPlaylistPlayIndex}
-                onRemove={onPlaylistRemove}
-                onClear={onPlaylistClear}
-                onMove={onPlaylistMove}
-              />
+                {hasPlaylist && (
+                  <PlaylistSidePanel
+                    items={playlist}
+                    onPlayIndex={onPlaylistPlayIndex}
+                    onRemove={onPlaylistRemove}
+                    onClear={onPlaylistClear}
+                    onMove={onPlaylistMove}
+                  />
+                )}
+              </>
             )}
 
             <ImportDialog
@@ -253,12 +306,12 @@ function PlaylistSidePanel({
   };
 
   return (
-    <div className="w-[270px] h-full bg-[#0a0a0a] flex flex-col shrink-0">
+    <div className="w-[270px] h-full bg-[var(--np-surface-alt)] flex flex-col shrink-0">
       {/* Header */}
       <div className="flex items-center justify-between px-4 h-12 shrink-0">
-        <h2 className="text-[11px] font-semibold text-white/50 uppercase tracking-wider">
+        <h2 className="text-[11px] font-semibold text-[var(--np-text-tertiary)] uppercase tracking-wider">
           Playlist
-          <span className="ml-2 text-[10px] text-white/30 tabular-nums normal-case">
+          <span className="ml-2 text-[10px] text-[var(--np-text-muted)] tabular-nums normal-case">
             {items.length}
           </span>
         </h2>
@@ -268,7 +321,7 @@ function PlaylistSidePanel({
                      transition-colors duration-100 ${
                        clearConfirm
                          ? "bg-red-500/15 text-red-400"
-                         : "text-white/40 hover:text-red-300 hover:bg-red-500/10"
+                         : "text-[var(--np-text-tertiary)] hover:text-red-300 hover:bg-red-500/10"
                      }`}
         >
           <Trash2 className="w-3 h-3" />
@@ -300,33 +353,33 @@ function PlaylistSidePanel({
                           transition-colors duration-100 select-none
                           ${item.current
                             ? "bg-[var(--np-accent-soft)]"
-                            : "hover:bg-white/6"
+                            : "hover:bg-[var(--np-hover)]"
                           }
                           ${dropIdx === i && dragIdx !== i
-                            ? "bg-white/8"
+                            ? "bg-[var(--np-hover)]"
                             : ""
                           }
                           ${dragIdx === i ? "opacity-40" : ""}`}
               onClick={() => onPlayIndex(item.index)}
             >
-              <GripVertical className="w-3 h-3 text-white/20 shrink-0 cursor-grab" />
+              <GripVertical className="w-3 h-3 text-[var(--np-text-muted)] shrink-0 cursor-grab" />
               <div className="w-4 h-4 flex items-center justify-center shrink-0">
                 {item.current ? (
                   <div className="w-1.5 h-1.5 rounded-full bg-[var(--np-accent)]" />
                 ) : (
-                  <Play className="w-3 h-3 text-white/30 opacity-0 group-hover:opacity-100 transition-opacity duration-100" />
+                  <Play className="w-3 h-3 text-[var(--np-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity duration-100" />
                 )}
               </div>
               <p
                 className={`flex-1 min-w-0 text-[11px] truncate ${
-                  item.current ? "text-white font-medium" : "text-white/70"
+                  item.current ? "text-[var(--np-text)] font-medium" : "text-[var(--np-text-secondary)]"
                 }`}
                 title={item.filename}
               >
                 {item.title || displayName(item.filename)}
               </p>
               <button
-                className="w-4 h-4 flex items-center justify-center text-white/20
+                className="w-4 h-4 flex items-center justify-center text-[var(--np-text-muted)]
                            hover:text-red-400 opacity-0 group-hover:opacity-100
                            transition-opacity duration-100 shrink-0"
                 onClick={(e) => {

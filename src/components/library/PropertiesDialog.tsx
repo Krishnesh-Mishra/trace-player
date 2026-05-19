@@ -145,7 +145,7 @@ export default function PropertiesDialog({ open, item, folder, onClose }: Props)
             role="dialog"
             aria-modal="true"
             aria-label="Properties"
-            className="relative bg-[#111] rounded-2xl shadow-2xl
+            className="relative bg-[var(--np-overlay)] rounded-2xl shadow-2xl
                        w-[360px] p-5"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}
@@ -154,12 +154,12 @@ export default function PropertiesDialog({ open, item, folder, onClose }: Props)
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium text-white/90">Properties</h3>
+              <h3 className="text-sm font-medium text-[var(--np-text)]">Properties</h3>
               <button
                 onClick={onClose}
                 aria-label="Close"
-                className="w-6 h-6 flex items-center justify-center text-white/40
-                           hover:text-white rounded-md hover:bg-white/10 cursor-pointer
+                className="w-6 h-6 flex items-center justify-center text-[var(--np-text-tertiary)]
+                           hover:text-[var(--np-text)] rounded-md hover:bg-[var(--np-hover)] cursor-pointer
                            transition-colors duration-100"
               >
                 <X className="w-4 h-4" />
@@ -169,8 +169,8 @@ export default function PropertiesDialog({ open, item, folder, onClose }: Props)
             <div className="space-y-2">
               {rows.map((row) => (
                 <div key={row.label} className="flex gap-3">
-                  <span className="text-[11px] text-white/40 w-20 shrink-0">{row.label}</span>
-                  <span className="text-[11px] text-white/80 break-all">{row.value}</span>
+                  <span className="text-[11px] text-[var(--np-text-tertiary)] w-20 shrink-0">{row.label}</span>
+                  <span className="text-[11px] text-[var(--np-text)] break-all">{row.value}</span>
                 </div>
               ))}
             </div>

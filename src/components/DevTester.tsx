@@ -133,17 +133,17 @@ export default function DevTester() {
         {open && (
           <motion.div
             className="fixed top-14 right-3 z-[100] w-96 max-h-[70vh]
-                       bg-[#101010]/95 backdrop-blur-xl 
+                       bg-[var(--np-overlay-heavy)] backdrop-blur-xl
                        rounded-xl shadow-2xl overflow-hidden flex flex-col"
             initial={{ opacity: 0, x: 12 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 12 }}
           >
-            <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
-              <span className="text-xs font-medium text-white/85">
+            <div className="flex items-center justify-between px-3 py-2">
+              <span className="text-xs font-medium text-[var(--np-text)]">
                 Dev tester
                 {results.length > 0 && (
-                  <span className="ml-2 text-[10px] text-white/50">
+                  <span className="ml-2 text-[10px] text-[var(--np-text-tertiary)]">
                     {passed} ✓ · {failed} ✗ · {results.length}/{STEPS.length}
                   </span>
                 )}
@@ -152,8 +152,8 @@ export default function DevTester() {
                 <button
                   className={`px-2 py-1 text-[10px] rounded cursor-pointer flex items-center gap-1 ${
                     running
-                      ? "bg-white/10 text-white/40 cursor-wait"
-                      : "bg-white/15 hover:bg-white/25 text-white/85"
+                      ? "bg-[var(--np-hover)] text-[var(--np-text-tertiary)] cursor-wait"
+                      : "bg-[var(--np-active)] hover:bg-[var(--np-selected)] text-[var(--np-text)]"
                   }`}
                   disabled={running}
                   onClick={run}
@@ -161,8 +161,8 @@ export default function DevTester() {
                   <Play className="w-3 h-3" /> Run all
                 </button>
                 <button
-                  className="w-6 h-6 flex items-center justify-center text-white/60
-                             hover:text-white rounded hover:bg-white/10 cursor-pointer"
+                  className="w-6 h-6 flex items-center justify-center text-[var(--np-text-secondary)]
+                             hover:text-[var(--np-text)] rounded hover:bg-[var(--np-hover)] cursor-pointer"
                   onClick={() => setOpen(false)}
                 >
                   <X className="w-3.5 h-3.5" />
@@ -172,7 +172,7 @@ export default function DevTester() {
 
             <div className="overflow-y-auto flex-1 px-2 py-1 space-y-px">
               {results.length === 0 && !running && (
-                <div className="text-[11px] text-white/40 px-2 py-4 text-center">
+                <div className="text-[11px] text-[var(--np-text-tertiary)] px-2 py-4 text-center">
                   Click "Run all" to test {STEPS.length} command paths.
                 </div>
               )}
@@ -181,7 +181,7 @@ export default function DevTester() {
                   key={i}
                   className={`text-[10px] flex items-start gap-2 px-2 py-1 rounded ${
                     r.status === "ok"
-                      ? "text-white/80"
+                      ? "text-[var(--np-text-secondary)]"
                       : "bg-rose-900/30 text-rose-200"
                   }`}
                 >
@@ -192,9 +192,9 @@ export default function DevTester() {
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-white/55">{r.group}</span>
+                      <span className="text-[var(--np-text-tertiary)]">{r.group}</span>
                       <span className="font-medium">{r.name}</span>
-                      <span className="text-white/40 ml-auto truncate">{r.cmd}</span>
+                      <span className="text-[var(--np-text-tertiary)] ml-auto truncate">{r.cmd}</span>
                     </div>
                     {r.error && (
                       <div className="text-[9px] text-rose-300/90 mt-0.5 break-words">

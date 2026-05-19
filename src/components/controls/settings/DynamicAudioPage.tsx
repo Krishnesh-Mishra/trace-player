@@ -54,9 +54,9 @@ export default function DynamicAudioPage({
           }`}
         >
           <div>
-            <div className="flex items-center justify-between text-[11px] text-white/70 mb-1.5">
+            <div className="flex items-center justify-between text-[11px] text-[var(--np-text-secondary)] mb-1.5">
               <span>Min loudness</span>
-              <span className="tabular-nums text-white/90">{dynamicAudio.minDb} dB</span>
+              <span className="tabular-nums text-[var(--np-text)]">{dynamicAudio.minDb} dB</span>
             </div>
             <RangeSlider
               value={dynamicAudio.minDb}
@@ -65,15 +65,15 @@ export default function DynamicAudioPage({
               step={1}
               onChange={setMin}
             />
-            <p className="text-[9px] text-white/40 mt-1">
+            <p className="text-[9px] text-[var(--np-text-tertiary)] mt-1">
               Anything quieter is amplified up to this level.
             </p>
           </div>
 
           <div>
-            <div className="flex items-center justify-between text-[11px] text-white/70 mb-1.5">
+            <div className="flex items-center justify-between text-[11px] text-[var(--np-text-secondary)] mb-1.5">
               <span>Max loudness</span>
-              <span className="tabular-nums text-white/90">{dynamicAudio.maxDb} dB</span>
+              <span className="tabular-nums text-[var(--np-text)]">{dynamicAudio.maxDb} dB</span>
             </div>
             <RangeSlider
               value={dynamicAudio.maxDb}
@@ -82,7 +82,7 @@ export default function DynamicAudioPage({
               step={1}
               onChange={setMax}
             />
-            <p className="text-[9px] text-white/40 mt-1">
+            <p className="text-[9px] text-[var(--np-text-tertiary)] mt-1">
               Sudden loud peaks are limited to this ceiling (5 ms attack).
             </p>
           </div>

@@ -256,34 +256,16 @@ export type LoopMode = "off" | "file" | "playlist";
 export type BarSize = "small" | "large" | "full";
 export type SeekBarSize = "small" | "medium" | "large" | "xlarge";
 export type ChapterMarkerStyle = "gap" | "triangle" | "bar" | "single-bar";
-export type AccentColor = "white" | "blue" | "emerald" | "pink" | "amber";
-
 export type AppearanceState = {
   barSize: BarSize;
   seekBarSize: SeekBarSize;
   chapterMarkers: ChapterMarkerStyle;
-  accent: AccentColor;
 };
 
 export const DEFAULT_APPEARANCE: AppearanceState = {
   barSize: "small",
   seekBarSize: "medium",
   chapterMarkers: "gap",
-  accent: "white",
-};
-
-/**
- * Tailwind-ish hex values keyed by AccentColor. Applied as a CSS custom
- * property `--np-accent` on the document root so any component (Timeline
- * fill, A-B loop button highlight, hover halos) can reference the same
- * value without prop-threading.
- */
-export const ACCENT_PALETTE: Record<AccentColor, { hex: string; soft: string; label: string }> = {
-  white:   { hex: "#ffffff", soft: "rgba(255,255,255,0.18)", label: "White" },
-  blue:    { hex: "#60a5fa", soft: "rgba(96,165,250,0.22)",  label: "Blue" },
-  emerald: { hex: "#34d399", soft: "rgba(52,211,153,0.22)",  label: "Emerald" },
-  pink:    { hex: "#f472b6", soft: "rgba(244,114,182,0.22)", label: "Pink" },
-  amber:   { hex: "#fbbf24", soft: "rgba(251,191,36,0.22)",  label: "Amber" },
 };
 
 export const SEEK_BAR_HEIGHT_PX: Record<SeekBarSize, number> = {

@@ -64,8 +64,8 @@ export default function SubtitleSettingsPanel({
           ref={panelRef}
           key="sub-panel"
           className="absolute top-0 right-0 bottom-0 z-50
-                     w-[340px] bg-[#0d0d0f]/95 backdrop-blur-xl
-                     border-l border-white/10 shadow-2xl
+                     w-[340px] bg-[var(--np-overlay-heavy)] backdrop-blur-xl
+                     border-l border-[var(--np-divider)] shadow-2xl
                      flex flex-col"
           initial={{ x: "100%", opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
@@ -75,11 +75,11 @@ export default function SubtitleSettingsPanel({
           onDoubleClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-4 h-12 border-b border-white/10 shrink-0">
-            <h2 className="text-sm font-medium text-white tracking-wide">Subtitles</h2>
+          <div className="flex items-center justify-between px-4 h-12 border-b border-[var(--np-divider)] shrink-0">
+            <h2 className="text-sm font-medium text-[var(--np-text)] tracking-wide">Subtitles</h2>
             <motion.button
-              className="w-7 h-7 flex items-center justify-center text-white/60
-                         hover:text-white rounded-md hover:bg-white/10 cursor-pointer
+              className="w-7 h-7 flex items-center justify-center text-[var(--np-text-secondary)]
+                         hover:text-[var(--np-text)] rounded-md hover:bg-[var(--np-hover)] cursor-pointer
                          transition-colors duration-100"
               whileHover={{ scale: 1.08 }}
               whileTap={{ scale: 0.9 }}
@@ -93,8 +93,8 @@ export default function SubtitleSettingsPanel({
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
             <motion.button
               className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg
-                          bg-white/5 hover:bg-white/10
-                         text-sm text-white/70 hover:text-white cursor-pointer
+                          bg-[var(--np-hover)] hover:bg-[var(--np-hover)]
+                         text-sm text-[var(--np-text-secondary)] hover:text-[var(--np-text)] cursor-pointer
                          transition-colors duration-100"
               whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.98 }}

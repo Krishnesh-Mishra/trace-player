@@ -123,7 +123,13 @@ impl StreamingSession {
     /// the initial-checksum phase; we pluck the percentage out and ship it
     /// so the loading overlay shows real progress instead of an
     /// indeterminate spinner.
-    pub fn start(rqbit_exe: &Path, session_dir: &Path, app: AppHandle) -> Result<Self, String> {
+    pub fn start(
+        rqbit_exe: &Path,
+        session_dir: &Path,
+        app: AppHandle,
+        upload_limit: u64,
+        download_limit: u64,
+    ) -> Result<Self, String> {
         if !rqbit_exe.is_file() {
             return Err(format!(
                 "rqbit.exe not found at {} — installer should place it in bin/",
@@ -149,16 +155,18 @@ impl StreamingSession {
         let mut cmd = Command::new(rqbit_exe);
         cmd.arg("--http-api-listen-addr")
             .arg("127.0.0.1:0")
-            .arg("--disable-dht-persistence")
-            // Throttle upload so the player doesn't saturate the user's
-            // upstream bandwidth. rqbit's --upload-rate-limit-mibps caps
-            // upload to the given MiB/s. 0.5 MiB/s (~4 Mbit/s) is enough
-            // to be a good peer without starving the user's connection.
-            // TODO: rqbit does not currently support --disable-upload or an
-            // upload ratio limit; revisit when rqbit adds those options.
-            .arg("--upload-rate-limit-mibps")
-            .arg("0.5")
-            .arg("server")
+            .arg("--disable-dht-persistence");
+
+        if upload_limit > 0 {
+            cmd.arg("--ratelimit-upload")
+                .arg(upload_limit.to_string());
+        }
+        if download_limit > 0 {
+            cmd.arg("--ratelimit-download")
+                .arg(download_limit.to_string());
+        }
+
+        cmd.arg("server")
             .arg("start")
             .arg("--disable-persistence")
             .arg(session_dir)

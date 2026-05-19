@@ -91,7 +91,6 @@ interface ControlBarProps {
   perfProfile: PerfProfileName;
   perfEffective: string;
   onBattery: boolean;
-  screenshotDir: string | null;
   audioFx: AudioFxState;
   abLoopActive: boolean;
   appearance: AppearanceState;
@@ -107,18 +106,17 @@ interface ControlBarProps {
   onExclusiveFullscreenChange: (b: boolean) => void;
   onPerfProfileChange: (p: PerfProfileName) => void;
   onAudioFxChange: (f: AudioFxState) => void;
-  onAppearanceChange: (a: AppearanceState) => void;
   deinterlace: boolean;
   onDeinterlaceToggle: () => void;
   audioDevice: string;
   onAudioDeviceChange: (name: string) => void;
   onScreenshot: () => void;
-  onPickScreenshotDir: () => void;
   onAbLoopCycle: () => void;
   alwaysOnTop: boolean;
   onAlwaysOnTopToggle: () => void;
   onMediaInfo: () => void;
   onJumpToTime: () => void;
+  onOpenSettings: () => void;
   onFrameStep: (backward: boolean) => void;
   onLoopCycle: () => void;
   onPlaylistToggle: () => void;
@@ -175,7 +173,6 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
     perfProfile,
     perfEffective,
     onBattery,
-    screenshotDir,
     audioFx,
     abLoopActive,
     appearance,
@@ -191,13 +188,11 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
     onExclusiveFullscreenChange,
     onPerfProfileChange,
     onAudioFxChange,
-    onAppearanceChange,
     deinterlace,
     onDeinterlaceToggle,
     audioDevice,
     onAudioDeviceChange,
     onScreenshot,
-    onPickScreenshotDir,
     alwaysOnTop,
     onAlwaysOnTopToggle,
     onMediaInfo,
@@ -225,6 +220,7 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
     onSourceNetwork,
     onSourceRecent,
     onLibraryOpen,
+    onOpenSettings,
     showThumbnails = true,
   } = props;
 
@@ -268,8 +264,8 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
   // small-vs-centered layouts. Declared once so the two return paths below
   // share identical buttons (no drift between layouts).
   const TimeBadges = useMemo(() => (
-    <div className="flex items-center gap-1 text-xs text-white/50 tabular-nums">
-      <span className="text-white/80">{fmtTime(currentTime)}</span>
+    <div className="flex items-center gap-1 text-xs text-[var(--np-text-tertiary)] tabular-nums">
+      <span className="text-[var(--np-text)]">{fmtTime(currentTime)}</span>
       <span>/</span>
       <span>{fmtTime(duration)}</span>
       {showHdrBadge && showExtras && (
@@ -289,7 +285,7 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
     <>
       <motion.button
         className={`${btnSize} flex items-center justify-center rounded-lg
-                   hover:bg-white/10 cursor-pointer transition-colors duration-100`}
+                   hover:bg-[var(--np-hover)] cursor-pointer transition-colors duration-100`}
         style={{
           color: loopActive ? "var(--np-accent)" : "rgba(255,255,255,0.6)",
         }}
@@ -309,8 +305,8 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
       </motion.button>
 
       <motion.button
-        className={`${btnSize} relative flex items-center justify-center text-white/60
-                   hover:text-white rounded-lg hover:bg-white/10 cursor-pointer
+        className={`${btnSize} relative flex items-center justify-center text-[var(--np-text-secondary)]
+                   hover:text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                    transition-colors duration-100`}
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}
@@ -334,8 +330,8 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
       {showFullExtras && (
         <>
           <motion.button
-            className={`${btnSize} flex items-center justify-center text-white/60
-                       hover:text-white rounded-lg hover:bg-white/10 cursor-pointer
+            className={`${btnSize} flex items-center justify-center text-[var(--np-text-secondary)]
+                       hover:text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                        transition-colors duration-100`}
             whileHover={{ scale: 1.08 }}
             whileTap={{ scale: 0.88 }}
@@ -347,8 +343,8 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
           </motion.button>
 
           <motion.button
-            className={`${btnSize} flex items-center justify-center text-white/60
-                       hover:text-white rounded-lg hover:bg-white/10 cursor-pointer
+            className={`${btnSize} flex items-center justify-center text-[var(--np-text-secondary)]
+                       hover:text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                        transition-colors duration-100`}
             whileHover={{ scale: 1.08 }}
             whileTap={{ scale: 0.88 }}
@@ -360,8 +356,8 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
           </motion.button>
 
           <motion.button
-            className={`${btnSize} flex items-center justify-center text-white/60
-                       hover:text-white rounded-lg hover:bg-white/10 cursor-pointer
+            className={`${btnSize} flex items-center justify-center text-[var(--np-text-secondary)]
+                       hover:text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                        transition-colors duration-100`}
             whileHover={{ scale: 1.08 }}
             whileTap={{ scale: 0.88 }}
@@ -387,11 +383,11 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
         onVolumeChange={onVolumeChange}
       />
 
-      <div className="w-px h-4 bg-white/10 mx-1" />
+      <div className="w-px h-4 bg-[var(--np-hover)] mx-1" />
 
       <motion.button
-        className={`${btnSize} flex items-center justify-center text-white/60
-                   hover:text-white rounded-lg hover:bg-white/10 cursor-pointer
+        className={`${btnSize} flex items-center justify-center text-[var(--np-text-secondary)]
+                   hover:text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                    transition-colors duration-100`}
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}
@@ -403,8 +399,8 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
       </motion.button>
 
       <motion.button
-        className={`${btnSize} flex items-center justify-center text-white/60
-                   hover:text-white rounded-lg hover:bg-white/10 cursor-pointer
+        className={`${btnSize} flex items-center justify-center text-[var(--np-text-secondary)]
+                   hover:text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                    transition-colors duration-100`}
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}
@@ -422,8 +418,8 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
       <div className="relative">
         <motion.button
           data-settings-toggle
-          className={`${btnSize} flex items-center justify-center text-white/60
-                     hover:text-white rounded-lg hover:bg-white/10 cursor-pointer
+          className={`${btnSize} flex items-center justify-center text-[var(--np-text-secondary)]
+                     hover:text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                      transition-colors duration-100`}
           whileHover={{ scale: 1.08 }}
           whileTap={{ scale: 0.88 }}
@@ -474,13 +470,9 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
           perfProfile={perfProfile}
           perfEffective={perfEffective}
           onBattery={onBattery}
-          screenshotDir={screenshotDir}
           onPerfProfileChange={onPerfProfileChange}
-          onPickScreenshotDir={onPickScreenshotDir}
           audioFx={audioFx}
           onAudioFxChange={onAudioFxChange}
-          appearance={appearance}
-          onAppearanceChange={onAppearanceChange}
           deinterlace={deinterlace}
           onDeinterlaceToggle={onDeinterlaceToggle}
           currentAudioDevice={audioDevice}
@@ -500,6 +492,7 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
           onSourceNetwork={onSourceNetwork}
           onSourceRecent={onSourceRecent}
           onLibraryOpen={onLibraryOpen}
+          onOpenSettings={onOpenSettings}
         />
       </div>
     </>
@@ -512,13 +505,13 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
       hdrMode, hdrInfo, onHdrModeChange, upscaling, onUpscalingChange,
       interpolation, vsync, exclusiveFullscreen, onInterpolationChange,
       onVsyncChange, onExclusiveFullscreenChange, perfProfile, perfEffective,
-      onBattery, screenshotDir, onPerfProfileChange, onPickScreenshotDir,
-      audioFx, onAudioFxChange, appearance, onAppearanceChange,
+      onBattery, onPerfProfileChange,
+      audioFx, onAudioFxChange, appearance,
       deinterlace, onDeinterlaceToggle, audioDevice, onAudioDeviceChange,
       loopMode, onLoopCycle, playlistCount, onPlaylistToggle, onScreenshot,
       abLoopActive, onAbLoopCycle, alwaysOnTop, onAlwaysOnTopToggle,
       onJumpToTime, onMediaInfo, onSourceLocal, onSourceNetwork, onSourceRecent,
-      barSize, btnSize, iconSize]);
+      onOpenSettings, barSize, btnSize, iconSize]);
 
   return (
     <motion.div
@@ -536,7 +529,7 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
       onDoubleClick={(e) => e.stopPropagation()}
     >
       <div
-        className={`w-full  ${outerClass} bg-[#111]/50 backdrop-blur-xl
+        className={`w-full  ${outerClass} bg-[var(--np-overlay)] backdrop-blur-xl
                    rounded-2xl px-4 pt-3 pb-3`}
       >
         <Timeline
@@ -560,7 +553,7 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
           <div className="flex items-center gap-1 mt-2">
             <div className="flex-1 flex items-center gap-1 min-w-0">
               {TimeBadges}
-              <div className="w-px h-4 bg-white/10 mx-1" />
+              <div className="w-px h-4 bg-[var(--np-hover)] mx-1" />
               {ExtraControls}
             </div>
 

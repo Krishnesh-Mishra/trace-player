@@ -164,7 +164,7 @@ export default function AuthRequiredModal({
           onClick={handleCancel}
         >
           <motion.div
-            className="bg-[#111]/95 backdrop-blur-xl  rounded-2xl
+            className="bg-[var(--np-overlay-heavy)] backdrop-blur-xl  rounded-2xl
                        shadow-2xl p-5 w-[460px] max-w-[92vw] flex flex-col gap-4"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}
@@ -180,16 +180,16 @@ export default function AuthRequiredModal({
                 <Lock className="w-4 h-4 text-amber-300" />
               </div>
               <div className="flex flex-col gap-0.5 min-w-0">
-                <span className="text-sm font-medium text-white">
+                <span className="text-sm font-medium text-[var(--np-text)]">
                   {kind === "cookie-locked"
                     ? "Browser is holding its cookies hostage"
                     : "This video requires login"}
                 </span>
-                <span className="text-[11px] text-white/55 truncate">{site}</span>
+                <span className="text-[11px] text-[var(--np-text-tertiary)] truncate">{site}</span>
               </div>
             </div>
 
-            <p className="text-[12px] text-white/65 leading-relaxed">
+            <p className="text-[12px] text-[var(--np-text-secondary)] leading-relaxed">
               {kind === "cookie-locked" ? (
                 <>
                   <b>
@@ -215,7 +215,7 @@ export default function AuthRequiredModal({
             </p>
 
             <div className="flex flex-col gap-1.5">
-              <span className="text-[10px] uppercase tracking-wider text-white/40">
+              <span className="text-[10px] uppercase tracking-wider text-[var(--np-text-tertiary)]">
                 Cookies from browser
               </span>
               <div className="grid grid-cols-3 gap-1.5">
@@ -227,10 +227,10 @@ export default function AuthRequiredModal({
                       ref={idx === 0 ? firstButtonRef : undefined}
                       onClick={() => setBrowser(b.id)}
                       className={`px-2.5 py-1.5 rounded-lg text-xs cursor-pointer
-                                  transition-colors duration-100 border ${
+                                  transition-colors duration-100 ${
                                     active
-                                      ? "bg-white/15 border-white/30 text-white"
-                                      : "bg-white/5 border-white/10 text-white/65 hover:text-white/90 hover:bg-white/10"
+                                      ? "bg-[var(--np-active)] text-[var(--np-text)]"
+                                      : "bg-[var(--np-hover)] text-[var(--np-text-secondary)] hover:text-[var(--np-text)] hover:bg-[var(--np-active)]"
                                   }`}
                     >
                       {b.label}
@@ -245,7 +245,7 @@ export default function AuthRequiredModal({
                 <button
                   onClick={() => setShowLog((v) => !v)}
                   className="self-start flex items-center gap-1 text-[10px] uppercase
-                             tracking-wider text-white/40 hover:text-white/65 cursor-pointer"
+                             tracking-wider text-[var(--np-text-tertiary)] hover:text-[var(--np-text-secondary)] cursor-pointer"
                 >
                   {showLog ? (
                     <ChevronDown className="w-3 h-3" />
@@ -256,7 +256,7 @@ export default function AuthRequiredModal({
                 </button>
                 {showLog && (
                   <pre
-                    className="text-[10px] text-white/55 bg-black/40 
+                    className="text-[10px] text-[var(--np-text-tertiary)] bg-black/40 
                                  rounded-md p-2 leading-snug whitespace-pre-wrap break-words"
                   >
                     {summary}
@@ -275,8 +275,8 @@ export default function AuthRequiredModal({
               <button
                 onClick={handleOpenInBrowser}
                 disabled={busy}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white/65
-                           hover:text-white/90 rounded-lg hover:bg-white/8 cursor-pointer
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-[var(--np-text-secondary)]
+                           hover:text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                            transition-colors duration-100 disabled:opacity-40"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
@@ -286,8 +286,8 @@ export default function AuthRequiredModal({
                 <button
                   onClick={handleCancel}
                   disabled={busy}
-                  className="px-3 py-1.5 text-xs text-white/50 hover:text-white/80
-                             rounded-lg hover:bg-white/8 cursor-pointer
+                  className="px-3 py-1.5 text-xs text-[var(--np-text-tertiary)] hover:text-[var(--np-text-secondary)]
+                             rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                              transition-colors duration-100 disabled:opacity-40"
                 >
                   Cancel

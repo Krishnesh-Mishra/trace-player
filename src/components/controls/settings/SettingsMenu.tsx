@@ -14,7 +14,6 @@ import type {
   PerfProfileName,
   AudioFxState,
   PipelineInfo,
-  AppearanceState,
   LoopMode,
 } from "../../types";
 import MainPage from "./MainPage";
@@ -31,7 +30,7 @@ import HdrPage from "./HdrPage";
 import UpscalingPage from "./UpscalingPage";
 import InterpolationPage from "./InterpolationPage";
 import PerformancePage from "./PerformancePage";
-import AppearancePage from "./AppearancePage";
+
 import AudioDevicePage from "./AudioDevicePage";
 import VideoSourcePage from "./VideoSourcePage";
 import VideoAppearancePage from "./VideoAppearancePage";
@@ -72,13 +71,9 @@ interface Props {
   perfProfile: PerfProfileName;
   perfEffective: string;
   onBattery: boolean;
-  screenshotDir: string | null;
   onPerfProfileChange: (p: PerfProfileName) => void;
-  onPickScreenshotDir: () => void;
   audioFx: AudioFxState;
   onAudioFxChange: (f: AudioFxState) => void;
-  appearance: AppearanceState;
-  onAppearanceChange: (a: AppearanceState) => void;
   deinterlace: boolean;
   onDeinterlaceToggle: () => void;
   currentAudioDevice: string;
@@ -98,6 +93,7 @@ interface Props {
   onSourceNetwork: () => void;
   onSourceRecent: () => void;
   onLibraryOpen: () => void;
+  onOpenSettings: () => void;
 }
 
 export default function SettingsMenu(props: Props) {
@@ -160,7 +156,7 @@ export default function SettingsMenu(props: Props) {
       {open && (
         <motion.div
           ref={menuRef}
-          className={"absolute z-50 w-60 bg-[#111]/85 backdrop-blur-xl rounded-xl  shadow-2xl overflow-hidden " + (!isFullBar ? " bottom-18 -right-4" : " -bottom-2 left-12")}
+          className={"absolute z-50 w-60 bg-[var(--np-overlay)] backdrop-blur-xl rounded-xl  shadow-2xl overflow-hidden " + (!isFullBar ? " bottom-18 -right-4" : " -bottom-2 left-12")}
           initial={{ opacity: 0, scale: 0.88, y: 6, transformOrigin: !isFullBar ? "bottom right" : "bottom left" }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.88, y: 6 }}
@@ -185,14 +181,7 @@ export default function SettingsMenu(props: Props) {
                 onAlwaysOnTopToggle={props.onAlwaysOnTopToggle}
                 onJumpToTime={props.onJumpToTime}
                 onMediaInfo={props.onMediaInfo}
-              />
-            )}
-            {page === "appearance" && (
-              <AppearancePage
-                direction={direction}
-                appearance={props.appearance}
-                onChange={props.onAppearanceChange}
-                onBack={() => goBackTo("main")}
+                onOpenSettings={props.onOpenSettings}
               />
             )}
             {page === "performance" && (
@@ -201,9 +190,7 @@ export default function SettingsMenu(props: Props) {
                 profile={props.perfProfile}
                 effective={props.perfEffective}
                 onBattery={props.onBattery}
-                screenshotDir={props.screenshotDir}
                 onChange={props.onPerfProfileChange}
-                onPickScreenshotDir={props.onPickScreenshotDir}
                 onBack={() => goBackTo("main")}
               />
             )}

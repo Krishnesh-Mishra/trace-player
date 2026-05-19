@@ -58,7 +58,7 @@ export default function VideoResolutionPage({
     >
       <BackHeader label="Resolution" onClick={onBack} />
       <div className="px-2 pt-1 pb-2">
-        <div className="text-[10px] text-white/45 px-1 pb-2 leading-snug">
+        <div className="text-[10px] text-[var(--np-text-tertiary)] px-1 pb-2 leading-snug">
           For YouTube, Hotstar, and other yt-dlp-handled URLs. Applies to the
           next video you open. Direct files / torrents play at their native
           resolution.
@@ -71,12 +71,12 @@ export default function VideoResolutionPage({
                 key={o.label}
                 onClick={() => onChange(o.value)}
                 className="w-full flex items-start justify-between px-3 py-2
-                           text-sm text-white/90 rounded-lg hover:bg-white/10
+                           text-sm text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)]
                            cursor-pointer transition-colors duration-100"
               >
                 <span className="flex flex-col items-start text-left">
                   <span>{o.label}</span>
-                  <span className="text-[9px] text-white/40 mt-0.5">{o.sub}</span>
+                  <span className="text-[9px] text-[var(--np-text-tertiary)] mt-0.5">{o.sub}</span>
                 </span>
                 {active && (
                   <Check

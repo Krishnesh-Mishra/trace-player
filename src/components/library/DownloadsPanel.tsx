@@ -64,21 +64,21 @@ export default function DownloadsPanel({ open, onClose }: Props) {
       {open && (
         <motion.div
           className="absolute top-0 right-0 bottom-0 w-80 z-[60]
-                     bg-[#0c0c0c]/95 backdrop-blur-xl flex flex-col"
+                     bg-[var(--np-bg)] backdrop-blur-xl flex flex-col"
           initial={{ x: "100%" }}
           animate={{ x: 0 }}
           exit={{ x: "100%" }}
           transition={{ type: "spring", stiffness: 380, damping: 30 }}
         >
           <div className="flex items-center justify-between px-4 pt-4 pb-3">
-            <h3 className="text-sm font-medium text-white/90 flex items-center gap-2">
+            <h3 className="text-sm font-medium text-[var(--np-text)] flex items-center gap-2">
               <Download className="w-4 h-4" />
               Downloads
             </h3>
             <button
               onClick={onClose}
-              className="w-6 h-6 flex items-center justify-center text-white/40
-                         hover:text-white rounded-md hover:bg-white/10 cursor-pointer
+              className="w-6 h-6 flex items-center justify-center text-[var(--np-text-tertiary)]
+                         hover:text-[var(--np-text)] rounded-md hover:bg-[var(--np-hover)] cursor-pointer
                          transition-colors duration-100"
             >
               <X className="w-4 h-4" />
@@ -87,7 +87,7 @@ export default function DownloadsPanel({ open, onClose }: Props) {
 
           <div className="flex-1 overflow-y-auto px-4 pb-4">
             {downloads.length === 0 ? (
-              <p className="text-[11px] text-white/30 text-center mt-8">
+              <p className="text-[11px] text-[var(--np-text-muted)] text-center mt-8">
                 No active downloads
               </p>
             ) : (
@@ -99,9 +99,9 @@ export default function DownloadsPanel({ open, onClose }: Props) {
                       : 0;
                   const isPaused = dl.state === "paused";
                   return (
-                    <div key={dl.torrentId} className="bg-white/[0.03] rounded-lg p-3">
+                    <div key={dl.torrentId} className="bg-[var(--np-hover)] rounded-lg p-3">
                       <div className="flex items-start gap-2 mb-2">
-                        <p className="flex-1 text-[11px] text-white/70 leading-snug line-clamp-2">
+                        <p className="flex-1 text-[11px] text-[var(--np-text-secondary)] leading-snug line-clamp-2">
                           {dl.name || `Torrent #${dl.torrentId}`}
                         </p>
                         <button
@@ -112,7 +112,7 @@ export default function DownloadsPanel({ open, onClose }: Props) {
                             invoke(cmd, { id: dl.torrentId }).catch(() => {});
                           }}
                           className="w-6 h-6 flex items-center justify-center rounded-md
-                                     text-white/40 hover:text-white/80 hover:bg-white/10
+                                     text-[var(--np-text-tertiary)] hover:text-[var(--np-text)] hover:bg-[var(--np-hover)]
                                      cursor-pointer transition-colors shrink-0"
                         >
                           {isPaused ? (
@@ -122,18 +122,18 @@ export default function DownloadsPanel({ open, onClose }: Props) {
                           )}
                         </button>
                       </div>
-                      <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                      <div className="h-1.5 bg-[var(--np-hover)] rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-white/40 rounded-full transition-all duration-300"
+                          className="h-full bg-[var(--np-text-tertiary)] rounded-full transition-all duration-300"
                           style={{ width: `${pct}%` }}
                         />
                       </div>
                       <div className="flex items-center justify-between mt-1.5">
-                        <span className="text-[10px] text-white/40">
+                        <span className="text-[10px] text-[var(--np-text-tertiary)]">
                           {pct.toFixed(1)}% · {fmtSize(dl.progressBytes)} / {fmtSize(dl.totalBytes)}
                         </span>
                         {!isPaused && dl.downloadSpeedBps > 0 && (
-                          <span className="text-[10px] text-white/40">
+                          <span className="text-[10px] text-[var(--np-text-tertiary)]">
                             {fmtSpeed(dl.downloadSpeedBps)}
                           </span>
                         )}

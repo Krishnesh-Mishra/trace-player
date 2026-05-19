@@ -1,4 +1,4 @@
-export type LibraryTab = "torrents" | "local" | "explore" | "downloads";
+export type LibraryTab = "torrents" | "local" | "explore" | "downloads" | "settings";
 
 export interface LibraryItem {
   id: number;

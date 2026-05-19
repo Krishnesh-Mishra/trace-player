@@ -24,8 +24,8 @@ export function BackHeader({
   return (
     <button
       className="w-full flex items-center gap-2 px-3 py-2.5
-                 text-xs text-white/50 hover:text-white/80
-                 border-b border-white/8 cursor-pointer
+                 text-xs text-[var(--np-text-tertiary)] hover:text-[var(--np-text)]
+                 border-b border-[var(--np-divider)] cursor-pointer
                  transition-colors duration-100"
       onClick={onClick}
     >
@@ -52,10 +52,10 @@ export function TrackOption({
   onClick: () => void;
 }) {
   return (
-    <div className="group rounded-lg hover:bg-white/10 transition-colors duration-100">
+    <div className="group rounded-lg hover:bg-[var(--np-hover)] transition-colors duration-100">
       <motion.button
         className="w-full flex items-center justify-between px-3 py-2
-                   text-sm text-white/90 cursor-pointer"
+                   text-sm text-[var(--np-text)] cursor-pointer"
         whileTap={{ scale: 0.97 }}
         onClick={onClick}
       >
@@ -66,13 +66,13 @@ export function TrackOption({
             animate={{ scale: 1 }}
             transition={{ type: "spring", stiffness: 500, damping: 25 }}
           >
-            <Check className="w-3.5 h-3.5 text-white/70 shrink-0" />
+            <Check className="w-3.5 h-3.5 text-[var(--np-text-secondary)] shrink-0" />
           </motion.div>
         )}
       </motion.button>
       {description && (
         <p
-          className="px-3 pb-1.5 text-[9px] text-white/50 leading-snug
+          className="px-3 pb-1.5 text-[9px] text-[var(--np-text-tertiary)] leading-snug
                      overflow-hidden
                      max-h-12 opacity-100
                      transition-[max-height,opacity] duration-150"
@@ -88,8 +88,8 @@ export function TrackOption({
 export function StatRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between text-[10px] py-0.5">
-      <span className="text-white/45">{label}</span>
-      <span className="text-white/80 tabular-nums truncate ml-2 max-w-[60%] text-right">
+      <span className="text-[var(--np-text-tertiary)]">{label}</span>
+      <span className="text-[var(--np-text)] tabular-nums truncate ml-2 max-w-[60%] text-right">
         {value || "—"}
       </span>
     </div>
@@ -119,8 +119,8 @@ export function ToggleRow({
       role="button"
       tabIndex={0}
       className={`w-full flex items-center justify-between gap-2 cursor-pointer ${
-        inline ? "" : "px-3 py-2.5 rounded-lg hover:bg-white/10"
-      } text-sm text-white/90 transition-colors duration-100`}
+        inline ? "" : "px-3 py-2.5 rounded-lg hover:bg-[var(--np-hover)]"
+      } text-sm text-[var(--np-text)] transition-colors duration-100`}
       onClick={onToggle}
       onKeyDown={(e) => {
         if (e.key === " " || e.key === "Enter") {
@@ -132,7 +132,7 @@ export function ToggleRow({
       <span className="flex flex-col items-start min-w-0">
         <span className="truncate">{label}</span>
         {description && (
-          <span className="text-[9px] text-white/40 leading-tight mt-0.5 text-left">
+          <span className="text-[9px] text-[var(--np-text-tertiary)] leading-tight mt-0.5 text-left">
             {description}
           </span>
         )}

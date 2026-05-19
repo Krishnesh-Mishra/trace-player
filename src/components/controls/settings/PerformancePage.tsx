@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { BatteryCharging, Zap, FolderOpen } from "lucide-react";
+import { BatteryCharging, Zap } from "lucide-react";
 import type { PerfProfileName } from "../../types";
 import { PERF_OPTIONS } from "../../types";
 import { BackHeader, TrackOption, pageVariants, pageTransition } from "./shared";
@@ -9,9 +9,7 @@ interface Props {
   profile: PerfProfileName;
   effective: string;       // resolved profile when Auto is selected
   onBattery: boolean;
-  screenshotDir: string | null;
   onChange: (p: PerfProfileName) => void;
-  onPickScreenshotDir: () => void;
   onBack: () => void;
 }
 
@@ -20,18 +18,10 @@ export default function PerformancePage({
   profile,
   effective,
   onBattery,
-  screenshotDir,
   onChange,
-  onPickScreenshotDir,
   onBack,
 }: Props) {
   const showEffective = profile === "auto" && effective && effective !== "auto";
-
-  const truncatedDir = screenshotDir
-    ? screenshotDir.length > 32
-      ? "…" + screenshotDir.slice(-32)
-      : screenshotDir
-    : "Default (Pictures)";
 
   return (
     <motion.div
@@ -45,7 +35,7 @@ export default function PerformancePage({
     >
       <BackHeader label="Performance" onClick={onBack} />
 
-      <div className="px-3 pt-2 pb-1 flex items-center gap-1.5 text-[10px] text-white/60">
+      <div className="px-3 pt-2 pb-1 flex items-center gap-1.5 text-[10px] text-[var(--np-text-secondary)]">
         {onBattery ? (
           <>
             <BatteryCharging className="w-3 h-3" />
@@ -72,26 +62,13 @@ export default function PerformancePage({
       </div>
 
       {showEffective && (
-        <div className="px-3 pb-2 text-[10px] text-white/50 border-t border-white/8 pt-2">
+        <div className="px-3 pb-2 text-[10px] text-[var(--np-text-tertiary)] border-t border-[var(--np-divider)] pt-2">
           Active:{" "}
-          <span className="text-white/80">
+          <span className="text-[var(--np-text)]">
             {effective.replace("_", " ")}
           </span>
         </div>
       )}
-
-      <button
-        className="w-full flex items-start gap-2 px-3 py-2 border-t border-white/8
-                   text-left text-xs text-white/85 hover:bg-white/10 cursor-pointer
-                   transition-colors duration-100"
-        onClick={onPickScreenshotDir}
-      >
-        <FolderOpen className="w-3.5 h-3.5 text-white/60 mt-0.5 shrink-0" />
-        <span className="flex flex-col min-w-0">
-          <span>Screenshot folder</span>
-          <span className="text-[9px] text-white/45 truncate">{truncatedDir}</span>
-        </span>
-      </button>
     </motion.div>
   );
 }

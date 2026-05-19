@@ -65,7 +65,7 @@ export default function AudioFxPage({ direction, fx, onChange, onBack }: Props) 
         />
 
         {/* ── 10-band EQ ────────────────────────────────────────────── */}
-        <div className="border-t border-white/8 pt-3 space-y-2">
+        <div className="border-t border-[var(--np-divider)] pt-3 space-y-2">
           <div className="flex items-center justify-between">
             <ToggleRow
               label="Equalizer"
@@ -88,7 +88,7 @@ export default function AudioFxPage({ direction, fx, onChange, onBack }: Props) 
             </div>
             <div className="flex justify-end mt-1">
               <button
-                className="text-[10px] text-white/50 hover:text-white/80 px-2 py-0.5"
+                className="text-[10px] text-[var(--np-text-tertiary)] hover:text-[var(--np-text)] px-2 py-0.5"
                 onClick={resetEq}
               >
                 Reset
@@ -97,10 +97,10 @@ export default function AudioFxPage({ direction, fx, onChange, onBack }: Props) 
           </div>
         </div>
 
-        <div className="border-t border-white/8 pt-3">
-          <div className="flex items-center justify-between text-[11px] text-white/70 mb-1.5">
+        <div className="border-t border-[var(--np-divider)] pt-3">
+          <div className="flex items-center justify-between text-[11px] text-[var(--np-text-secondary)] mb-1.5">
             <span>Audio Delay</span>
-            <span className="tabular-nums text-white/90">
+            <span className="tabular-nums text-[var(--np-text)]">
               {fx.audioDelayMs > 0 ? "+" : ""}
               {fx.audioDelayMs} ms
             </span>
@@ -112,7 +112,7 @@ export default function AudioFxPage({ direction, fx, onChange, onBack }: Props) 
             step={10}
             onChange={(v) => set("audioDelayMs", v)}
           />
-          <p className="text-[9px] text-white/40 mt-1">
+          <p className="text-[9px] text-[var(--np-text-tertiary)] mt-1">
             Shift audio earlier (–) or later (+) to sync with video.
           </p>
         </div>
@@ -166,7 +166,7 @@ function EqColumn({
 
   return (
     <div className="flex flex-col items-center gap-1 select-none">
-      <span className="text-[9px] tabular-nums text-white/60 h-3">
+      <span className="text-[9px] tabular-nums text-[var(--np-text-secondary)] h-3">
         {value > 0 ? `+${value}` : value}
       </span>
       <div
@@ -187,15 +187,15 @@ function EqColumn({
           if (e.buttons & 1) onChange(yToDb(e.clientY));
         }}
       >
-        <div className="absolute inset-x-1/2 -translate-x-1/2 w-[3px] h-full bg-white/15 rounded-full" />
+        <div className="absolute inset-x-1/2 -translate-x-1/2 w-[3px] h-full bg-[var(--np-active)] rounded-full" />
         {/* Center reference line at 0 dB */}
-        <div className="absolute left-0 right-0 top-1/2 h-px bg-white/25" />
+        <div className="absolute left-0 right-0 top-1/2 h-px bg-[var(--np-selected)]" />
         <div
           className="absolute left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full bg-white shadow-md pointer-events-none"
           style={{ top: `calc(${pct}% - 5px)` }}
         />
       </div>
-      <span className="text-[9px] text-white/50 h-3">{label}</span>
+      <span className="text-[9px] text-[var(--np-text-tertiary)] h-3">{label}</span>
     </div>
   );
 }

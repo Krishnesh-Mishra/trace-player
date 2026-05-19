@@ -211,6 +211,10 @@ pub struct AppState {
     /// Max torrent cache size in bytes (0 = no limit). Eviction runs after
     /// sources are dropped. Set by the frontend via `set_torrent_cache_limit`.
     pub cache_limit_bytes: std::sync::atomic::AtomicU64,
+    /// Upload rate limit in bytes/sec (0 = unlimited). Applied at next rqbit spawn.
+    pub upload_limit_bytes: std::sync::atomic::AtomicU64,
+    /// Download rate limit in bytes/sec (0 = unlimited). Applied at next rqbit spawn.
+    pub download_limit_bytes: std::sync::atomic::AtomicU64,
     /// Torrent ID currently being resolved in `resolve_torrent_files`.
     /// Set after `add_magnet` returns so `cancel_torrent_resolve` can forget it.
     pub resolving_torrent_id: Mutex<Option<u32>>,
@@ -234,6 +238,8 @@ impl AppState {
             active_archive_path: Arc::new(Mutex::new(None)),
             stats_poller_started: AtomicBool::new(false),
             cache_limit_bytes: std::sync::atomic::AtomicU64::new(0),
+            upload_limit_bytes: std::sync::atomic::AtomicU64::new(524288), // 0.5 MiB/s default
+            download_limit_bytes: std::sync::atomic::AtomicU64::new(0),
             resolving_torrent_id: Mutex::new(None),
         }
     }

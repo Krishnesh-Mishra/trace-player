@@ -53,7 +53,7 @@ export default function LibraryCard({
       whileTap={{ scale: 0.97 }}
       onClick={onPlay}
     >
-      <div className="relative aspect-video rounded-lg overflow-hidden bg-white/5">
+      <div className="relative aspect-video rounded-lg overflow-hidden bg-[var(--np-hover)]">
         {thumbUrl ? (
           <img
             src={thumbUrl}
@@ -63,14 +63,14 @@ export default function LibraryCard({
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <Film className="w-8 h-8 text-white/15" />
+            <Film className="w-8 h-8 text-[var(--np-text-muted)]" />
           </div>
         )}
 
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors duration-150 flex items-center justify-center">
           <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-            <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-              <Play className="w-5 h-5 text-white fill-white" />
+            <div className="w-10 h-10 rounded-full bg-[var(--np-selected)] backdrop-blur-sm flex items-center justify-center">
+              <Play className="w-5 h-5 text-[var(--np-text)] fill-[var(--np-text)]" />
             </div>
           </div>
         </div>
@@ -89,7 +89,7 @@ export default function LibraryCard({
 
         {item.duration !== null && item.duration > 0 && (
           <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px]
-                          font-medium bg-black/70 text-white/90">
+                          font-medium bg-black/70 text-[var(--np-text)]">
             {fmtDuration(item.duration)}
           </span>
         )}
@@ -108,14 +108,14 @@ export default function LibraryCard({
               if (e.key === "Escape") onRenameCancel?.();
             }}
             onBlur={(e) => onRenameSubmit?.(e.target.value)}
-            className="w-full bg-white/10 rounded px-1.5 py-0.5
-                       text-xs text-white outline-none"
+            className="w-full bg-[var(--np-hover)] rounded px-1.5 py-0.5
+                       text-xs text-[var(--np-text)] outline-none"
           />
         ) : (
-          <p className="text-xs text-white/80 truncate">{item.title}</p>
+          <p className="text-xs text-[var(--np-text)] truncate">{item.title}</p>
         )}
         {item.file_size !== null && item.file_size > 0 && (
-          <p className="text-[10px] text-white/40 mt-0.5">
+          <p className="text-[10px] text-[var(--np-text-tertiary)] mt-0.5">
             {fmtSize(item.file_size)}
           </p>
         )}

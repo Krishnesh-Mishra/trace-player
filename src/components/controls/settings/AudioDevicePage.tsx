@@ -33,7 +33,7 @@ export default function AudioDevicePage({ direction, currentDevice, onDeviceChan
       <BackHeader label="Audio Output" onClick={onBack} />
       <div className="px-1 py-1 max-h-72 overflow-y-auto">
         {devices.length === 0 ? (
-          <p className="text-[11px] text-white/30 px-3 py-3">Loading devices…</p>
+          <p className="text-[11px] text-[var(--np-text-muted)] px-3 py-3">Loading devices…</p>
         ) : (
           devices.map((d) => (
             <TrackOption

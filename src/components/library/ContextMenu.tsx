@@ -60,7 +60,7 @@ export default function ContextMenu({ open, x, y, items, onClose }: Props) {
       {open && (
         <motion.div
           ref={menuRef}
-          className="fixed z-[100] min-w-[180px] py-1 bg-[#1a1a1a]  
+          className="fixed z-[100] min-w-[180px] py-1 bg-[var(--np-surface)]
                      rounded-lg shadow-xl shadow-black/50 backdrop-blur-sm origin-top-left"
           style={{ left: x, top: y }}
           initial={{ opacity: 0, scale: 0.92 }}
@@ -70,7 +70,7 @@ export default function ContextMenu({ open, x, y, items, onClose }: Props) {
         >
           {items.map((item, i) =>
             item.separator ? (
-              <div key={i} className="h-px bg-white/8 my-1 mx-2" />
+              <div key={i} className="h-px bg-[var(--np-divider)] my-1 mx-2" />
             ) : (
               <button
                 key={i}
@@ -83,9 +83,9 @@ export default function ContextMenu({ open, x, y, items, onClose }: Props) {
                 disabled={item.disabled}
                 className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[11px]
                            transition-colors duration-75 cursor-pointer
-                           ${item.disabled ? "text-white/20 cursor-default" : ""}
+                           ${item.disabled ? "text-[var(--np-text-muted)] cursor-default" : ""}
                            ${item.danger && !item.disabled ? "text-red-400 hover:bg-red-500/15" : ""}
-                           ${!item.danger && !item.disabled ? "text-white/80 hover:bg-white/10" : ""}`}
+                           ${!item.danger && !item.disabled ? "text-[var(--np-text)] hover:bg-[var(--np-hover)]" : ""}`}
               >
                 {item.icon && (
                   <span className="w-4 h-4 flex items-center justify-center shrink-0 opacity-70">
@@ -94,7 +94,7 @@ export default function ContextMenu({ open, x, y, items, onClose }: Props) {
                 )}
                 <span className="flex-1">{item.label}</span>
                 {item.shortcut && (
-                  <span className="text-[10px] text-white/30 ml-4">{item.shortcut}</span>
+                  <span className="text-[10px] text-[var(--np-text-muted)] ml-4">{item.shortcut}</span>
                 )}
               </button>
             ),

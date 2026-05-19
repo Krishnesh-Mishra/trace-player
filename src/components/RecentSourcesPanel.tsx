@@ -19,7 +19,7 @@ function classify(path: string): {
   if (lower.startsWith("magnet:")) {
     const dn = /dn=([^&]+)/.exec(path)?.[1];
     return {
-      icon: <Magnet className="w-4 h-4 text-white/70 shrink-0" />,
+      icon: <Magnet className="w-4 h-4 text-[var(--np-text-secondary)] shrink-0" />,
       label: dn ? decodeURIComponent(dn).replace(/\+/g, " ") : "Magnet link",
       sub: "Torrent",
     };
@@ -39,7 +39,7 @@ function classify(path: string): {
       /* ignore */
     }
     return {
-      icon: <Globe className="w-4 h-4 text-white/70 shrink-0" />,
+      icon: <Globe className="w-4 h-4 text-[var(--np-text-secondary)] shrink-0" />,
       label: path,
       sub: host,
     };
@@ -47,7 +47,7 @@ function classify(path: string): {
   // Local path: pluck the filename for the headline.
   const fname = path.split(/[/\\]/).pop() || path;
   return {
-    icon: <FolderOpen className="w-4 h-4 text-white/70 shrink-0" />,
+    icon: <FolderOpen className="w-4 h-4 text-[var(--np-text-secondary)] shrink-0" />,
     label: fname,
     sub: path,
   };
@@ -108,16 +108,16 @@ export default function RecentSourcesPanel({
         <motion.div
           ref={panelRef}
           className="absolute top-0 right-0 bottom-0 w-80 z-50
-                     bg-[#0c0c0c]/95 backdrop-blur-xl border-l border-white/10
+                     bg-[var(--np-overlay-heavy)] backdrop-blur-xl border-l border-[var(--np-divider)]
                      flex flex-col"
           initial={{ x: "100%" }}
           animate={{ x: 0 }}
           exit={{ x: "100%" }}
           transition={{ type: "spring", stiffness: 380, damping: 30 }}
         >
-          <div className="flex items-center justify-between px-3 py-2.5 border-b border-white/8">
-            <span className="flex items-center gap-2 text-sm text-white/90">
-              <Clock className="w-3.5 h-3.5 text-white/60" />
+          <div className="flex items-center justify-between px-3 py-2.5 border-b border-[var(--np-divider)]">
+            <span className="flex items-center gap-2 text-sm text-[var(--np-text)]">
+              <Clock className="w-3.5 h-3.5 text-[var(--np-text-secondary)]" />
               Recent
             </span>
             <div className="flex items-center gap-1">
@@ -129,7 +129,7 @@ export default function RecentSourcesPanel({
                              transition-colors duration-100
                              ${confirmClear
                                ? "text-red-400 hover:text-red-300 hover:bg-red-500/15"
-                               : "text-white/55 hover:text-white/90 hover:bg-white/8"
+                               : "text-[var(--np-text-tertiary)] hover:text-[var(--np-text)] hover:bg-[var(--np-hover)]"
                              }`}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -141,7 +141,7 @@ export default function RecentSourcesPanel({
               <button
                 onClick={onClose}
                 title="Close"
-                className="p-1.5 text-white/55 hover:text-white/90 hover:bg-white/8
+                className="p-1.5 text-[var(--np-text-tertiary)] hover:text-[var(--np-text)] hover:bg-[var(--np-hover)]
                            rounded-lg cursor-pointer transition-colors duration-100"
               >
                 <X className="w-3.5 h-3.5" />
@@ -151,7 +151,7 @@ export default function RecentSourcesPanel({
 
           <div className="flex-1 overflow-y-auto px-1 py-1">
             {recents.length === 0 ? (
-              <div className="text-[11px] text-white/40 px-3 py-6 text-center">
+              <div className="text-[11px] text-[var(--np-text-tertiary)] px-3 py-6 text-center">
                 Nothing here yet — files and URLs you open will show up.
               </div>
             ) : (
@@ -165,14 +165,14 @@ export default function RecentSourcesPanel({
                       onClose();
                     }}
                     className="w-full flex items-start gap-2.5 px-3 py-2
-                               text-left text-sm text-white/85 rounded-lg
-                               hover:bg-white/10 cursor-pointer
+                               text-left text-sm text-[var(--np-text)] rounded-lg
+                               hover:bg-[var(--np-hover)] cursor-pointer
                                transition-colors duration-100"
                   >
                     <span className="mt-0.5">{c.icon}</span>
                     <span className="flex flex-col items-start min-w-0">
                       <span className="truncate w-full">{c.label}</span>
-                      <span className="text-[9px] text-white/40 truncate w-full">
+                      <span className="text-[9px] text-[var(--np-text-tertiary)] truncate w-full">
                         {c.sub}
                       </span>
                     </span>

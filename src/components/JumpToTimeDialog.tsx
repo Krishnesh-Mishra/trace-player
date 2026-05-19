@@ -95,7 +95,7 @@ export default function JumpToTimeDialog({ open, duration, onSeek, onClose }: Pr
             role="dialog"
             aria-modal="true"
             aria-label="Jump to time"
-            className="bg-[#111]/90 backdrop-blur-xl  rounded-2xl
+            className="bg-[var(--np-overlay)] backdrop-blur-xl rounded-2xl
                        shadow-2xl p-5 w-72 flex flex-col gap-4"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}
@@ -104,9 +104,9 @@ export default function JumpToTimeDialog({ open, duration, onSeek, onClose }: Pr
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex flex-col gap-1">
-              <span className="text-sm font-medium text-white">Jump to time</span>
+              <span className="text-sm font-medium text-[var(--np-text)]">Jump to time</span>
               {duration > 0 && (
-                <span className="text-[10px] text-white/40">Duration: {fmtTime(duration)}</span>
+                <span className="text-[10px] text-[var(--np-text-tertiary)]">Duration: {fmtTime(duration)}</span>
               )}
             </div>
 
@@ -116,20 +116,20 @@ export default function JumpToTimeDialog({ open, duration, onSeek, onClose }: Pr
               onChange={(e) => { setValue(e.target.value); setError(false); }}
               onKeyDown={handleKey}
               placeholder="0:00  or  HH:MM:SS"
-              className={`w-full bg-white/8 border rounded-lg px-3 py-2 text-sm text-white
-                         placeholder:text-white/25 outline-none focus:ring-1
+              className={`w-full bg-[var(--np-hover)] rounded-lg px-3 py-2 text-sm text-[var(--np-text)]
+                         placeholder:text-[var(--np-text-muted)] outline-none focus:ring-1
                          transition-colors duration-100
                          ${error
-                           ? "border-red-500/60 focus:ring-red-500/40"
-                           : "border-white/10 focus:border-white/30 focus:ring-white/20"
+                           ? "ring-1 ring-red-500/60 focus:ring-red-500/40"
+                           : "focus:ring-[var(--np-active)]"
                          }`}
             />
 
             <div className="flex gap-2 justify-end">
               <button
                 onClick={onClose}
-                className="px-3 py-1.5 text-xs text-white/50 hover:text-white/80
-                           rounded-lg hover:bg-white/8 transition-colors duration-100 cursor-pointer"
+                className="px-3 py-1.5 text-xs text-[var(--np-text-tertiary)] hover:text-[var(--np-text)]
+                           rounded-lg hover:bg-[var(--np-hover)] transition-colors duration-100 cursor-pointer"
               >
                 Cancel
               </button>

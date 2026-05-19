@@ -221,12 +221,12 @@ export default function LoadingSourceOverlay() {
             exit={{ scale: 0.96, y: 4 }}
             transition={{ type: "spring", stiffness: 380, damping: 28 }}
             className="flex flex-col items-center gap-3 px-6 py-5
-                       bg-[#111]/85 backdrop-blur-xl 
+                       bg-[var(--np-overlay)] backdrop-blur-xl 
                        rounded-2xl shadow-2xl pointer-events-auto min-w-[320px] max-w-[420px]"
           >
-            <Loader2 className="w-6 h-6 text-white/85 animate-spin" />
+            <Loader2 className="w-6 h-6 text-[var(--np-text)] animate-spin" />
             <div className="flex flex-col items-center gap-1 w-full">
-              <span className="text-[11px] uppercase tracking-wider text-white/45">
+              <span className="text-[11px] uppercase tracking-wider text-[var(--np-text-tertiary)]">
                 {phase === "extract"
                   ? "Unpacking archive"
                   : phase === "connect"
@@ -235,16 +235,16 @@ export default function LoadingSourceOverlay() {
                   ? "Downloading content"
                   : "Loading source"}
               </span>
-              <span className="text-xs text-white/85 truncate max-w-full text-center">
+              <span className="text-xs text-[var(--np-text)] truncate max-w-full text-center">
                 {label}
               </span>
               {stats?.name && (
-                <span className="text-[10px] text-white/40 truncate max-w-full text-center">
+                <span className="text-[10px] text-[var(--np-text-tertiary)] truncate max-w-full text-center">
                   {stats.name}
                 </span>
               )}
               {typeof progress === "number" && (
-                <div className="mt-2 w-full h-1 bg-white/10 rounded-full overflow-hidden">
+                <div className="mt-2 w-full h-1 bg-[var(--np-hover)] rounded-full overflow-hidden">
                   <div
                     className="h-full transition-[width] duration-200"
                     style={{
@@ -283,10 +283,10 @@ export default function LoadingSourceOverlay() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col items-center">
-      <span className="text-[9px] uppercase tracking-wider text-white/35">
+      <span className="text-[9px] uppercase tracking-wider text-[var(--np-text-muted)]">
         {label}
       </span>
-      <span className="text-[11px] text-white/80 font-medium tabular-nums">
+      <span className="text-[11px] text-[var(--np-text)] font-medium tabular-nums">
         {value}
       </span>
     </div>

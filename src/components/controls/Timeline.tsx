@@ -227,7 +227,7 @@ export default function Timeline({
       onPointerUp={handlePointerUp}
     >
       <div
-        className="w-full rounded-full bg-white/20 relative overflow-visible transition-[height] duration-150"
+        className="w-full rounded-full bg-[var(--np-selected)] relative overflow-visible transition-[height] duration-150"
         style={{ height: trackHeight }}
       >
         <div
@@ -340,7 +340,7 @@ function ChapterMarker({
   if (style === "gap") {
     return (
       <div
-        className={`${common} top-0 h-full bg-[#111]/95`}
+        className={`${common} top-0 h-full bg-[var(--np-overlay-heavy)]`}
         style={{ left: `calc(${pct}% - 1px)`, width: 2 }}
         title={title}
       />

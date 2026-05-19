@@ -21,9 +21,9 @@ function Row({
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
-        <span className="text-[12px] text-white/70">{label}</span>
+        <span className="text-[12px] text-[var(--np-text-secondary)]">{label}</span>
         {hint !== undefined && (
-          <span className="text-[11px] text-white/90 tabular-nums">{hint}</span>
+          <span className="text-[11px] text-[var(--np-text)] tabular-nums">{hint}</span>
         )}
       </div>
       {children}
@@ -40,12 +40,12 @@ export default function StyleControls({ style, onChange }: Props) {
         <select
           value={style.font}
           onChange={(e) => update({ font: e.target.value })}
-          className="w-full px-2.5 py-1.5 text-[12px] text-white/90
-                     bg-white/[0.05]  rounded-md cursor-pointer
-                     outline-none focus:border-white/25"
+          className="w-full px-2.5 py-1.5 text-[12px] text-[var(--np-text)]
+                     bg-[var(--np-hover)]  rounded-md cursor-pointer
+                     outline-none"
         >
           {FONTS.map((f) => (
-            <option key={f} value={f} className="bg-[#1a1a1c]">
+            <option key={f} value={f} className="bg-[var(--np-surface)]">
               {f}
             </option>
           ))}
@@ -104,7 +104,7 @@ export default function StyleControls({ style, onChange }: Props) {
       </Row>
 
       <div className="flex items-center justify-between">
-        <span className="text-[12px] text-white/70">Bold</span>
+        <span className="text-[12px] text-[var(--np-text-secondary)]">Bold</span>
         <Toggle enabled={style.bold} onToggle={() => update({ bold: !style.bold })} size="md" />
       </div>
 
@@ -114,10 +114,10 @@ export default function StyleControls({ style, onChange }: Props) {
             <motion.button
               key={pos}
               className={`flex-1 px-2 py-1.5 text-[11px] capitalize rounded-md
-                          border cursor-pointer transition-colors duration-100 ${
+                          cursor-pointer transition-colors duration-100 ${
                             style.alignY === pos
-                              ? "bg-white/15 border-white/30 text-white"
-                              : "bg-white/[0.03] border-white/10 text-white/70 hover:bg-white/10"
+                              ? "bg-[var(--np-active)] text-[var(--np-text)]"
+                              : "bg-[var(--np-hover)] text-[var(--np-text-secondary)] hover:bg-[var(--np-active)]"
                           }`}
               whileTap={{ scale: 0.96 }}
               onClick={() => update({ alignY: pos })}

@@ -46,9 +46,9 @@ export default function ImagePage({ direction, imageParams, onChange, onBack }: 
       <div className="px-3 py-3 space-y-3">
         {FIELDS.map(({ key, label, desc }) => (
           <div key={key}>
-            <div className="flex items-center justify-between text-[11px] text-white/70 mb-1.5">
+            <div className="flex items-center justify-between text-[11px] text-[var(--np-text-secondary)] mb-1.5">
               <span>{label}</span>
-              <span className="tabular-nums text-white/90">{imageParams[key]}</span>
+              <span className="tabular-nums text-[var(--np-text)]">{imageParams[key]}</span>
             </div>
             <RangeSlider
               value={imageParams[key]}
@@ -57,7 +57,7 @@ export default function ImagePage({ direction, imageParams, onChange, onBack }: 
               step={1}
               onChange={(v) => setField(key, v)}
             />
-            <p className="text-[9px] text-white/40 mt-1">{desc}</p>
+            <p className="text-[9px] text-[var(--np-text-tertiary)] mt-1">{desc}</p>
           </div>
         ))}
 
@@ -65,8 +65,8 @@ export default function ImagePage({ direction, imageParams, onChange, onBack }: 
           className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg
                       text-xs cursor-pointer transition-colors duration-100 ${
                         isModified
-                          ? "text-white/90 bg-white/10 hover:bg-white/15"
-                          : "text-white/30 bg-white/5 cursor-default"
+                          ? "text-[var(--np-text)] bg-[var(--np-hover)] hover:bg-[var(--np-active)]"
+                          : "text-[var(--np-text-muted)] bg-[var(--np-hover)] cursor-default"
                       }`}
           disabled={!isModified}
           onClick={() => onChange(DEFAULT_IMAGE_PARAMS)}

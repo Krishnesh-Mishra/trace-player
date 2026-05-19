@@ -22,7 +22,7 @@ export default function ColorPicker({ value, onChange }: Props) {
           style={{ background: value }}
         />
       </label>
-      <span className="text-[11px] text-white/70 tabular-nums">{value}</span>
+      <span className="text-[11px] text-[var(--np-text-secondary)] tabular-nums">{value}</span>
     </div>
   );
 }

@@ -1536,7 +1536,15 @@ fn ensure_streaming(
                 "rqbit.exe not found in bin/ — installer must place it next to NewPlayer.exe"
                     .to_string()
             })?;
-            let session = StreamingSession::start(&exe, &streaming::session_dir(), app.clone())?;
+            let upload_limit = state.upload_limit_bytes.load(Ordering::Relaxed);
+            let download_limit = state.download_limit_bytes.load(Ordering::Relaxed);
+            let session = StreamingSession::start(
+                &exe,
+                &streaming::session_dir(),
+                app.clone(),
+                upload_limit,
+                download_limit,
+            )?;
             *guard = Some(session);
         }
         guard.as_ref().unwrap().handle()
@@ -1877,6 +1885,22 @@ pub fn set_torrent_cache_limit(state: State<'_, AppState>, bytes: u64) {
     if bytes > 0 {
         std::thread::spawn(move || streaming::run_cache_eviction(bytes));
     }
+}
+
+#[tauri::command]
+pub fn set_torrent_upload_limit(state: State<'_, AppState>, bytes: u64) {
+    state.upload_limit_bytes.store(bytes, Ordering::Relaxed);
+}
+
+#[tauri::command]
+pub fn set_torrent_download_limit(state: State<'_, AppState>, bytes: u64) {
+    state.download_limit_bytes.store(bytes, Ordering::Relaxed);
+}
+
+#[tauri::command]
+pub fn set_torrent_max_connections(_state: State<'_, AppState>, _count: u32) {
+    // Max connections is stored frontend-side in the Tauri Store and applied
+    // at the next rqbit spawn. No runtime change available via rqbit HTTP API.
 }
 
 // ── Archive sources: .zip / .7z / .rar ──────────────────────────────────────

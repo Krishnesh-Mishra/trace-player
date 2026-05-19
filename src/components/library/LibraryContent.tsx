@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import {
   Plus, Search, FolderPlus, Play, Pencil, Copy, Scissors,
-  ClipboardPaste, Trash2, Info, FolderOpen, Pin, Download,
+  ClipboardPaste, Trash2, Info, FolderOpen, Pin, Download, ListPlus,
 } from "lucide-react";
 import type { BreadcrumbEntry, FolderEntry, LibraryItem, LibraryTab, PinnedEntry } from "./types";
 import LibraryBreadcrumb from "./LibraryBreadcrumb";
@@ -44,6 +44,8 @@ interface Props {
   onUnpinFolder: (pinnedId: number) => void;
   folderPreviews?: Record<number, string[]>;
   onDownloadTorrent?: (item: LibraryItem) => void;
+  onAddItemToPlaylist?: (item: LibraryItem) => void;
+  onAddFolderToPlaylist?: (folderId: number) => void;
 }
 
 export default function LibraryContent({
@@ -73,6 +75,8 @@ export default function LibraryContent({
   onUnpinFolder,
   folderPreviews,
   onDownloadTorrent,
+  onAddItemToPlaylist,
+  onAddFolderToPlaylist,
 }: Props) {
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [localSearch, setLocalSearch] = useState(searchQuery);
@@ -115,6 +119,9 @@ export default function LibraryContent({
       const existingPin = pinned.find((p) => p.kind === "folder" && p.folder_id === folder.id);
       const menuItems: ContextMenuItem[] = [
         { label: "Open", icon: <FolderOpen className="w-3.5 h-3.5" />, onClick: () => onFolderOpen(folder.id) },
+        ...(onAddFolderToPlaylist ? [
+          { label: "Add to Playlist", icon: <ListPlus className="w-3.5 h-3.5" />, onClick: () => onAddFolderToPlaylist(folder.id) },
+        ] : []),
         { label: "Rename", icon: <Pencil className="w-3.5 h-3.5" />, shortcut: "F2", onClick: () => setRenamingFolderId(folder.id) },
         { label: "", separator: true, onClick: () => {} },
         {
@@ -132,13 +139,16 @@ export default function LibraryContent({
       ];
       setCtxMenu({ x: e.clientX, y: e.clientY, items: menuItems });
     },
-    [onFolderOpen, pinned, onPinFolder, onUnpinFolder],
+    [onFolderOpen, pinned, onPinFolder, onUnpinFolder, onAddFolderToPlaylist],
   );
 
   const handleItemContext = useCallback(
     (e: React.MouseEvent, item: LibraryItem) => {
       const menuItems: ContextMenuItem[] = [
         { label: "Play", icon: <Play className="w-3.5 h-3.5" />, onClick: () => onItemPlay(item) },
+        ...(onAddItemToPlaylist ? [
+          { label: "Add to Playlist", icon: <ListPlus className="w-3.5 h-3.5" />, onClick: () => onAddItemToPlaylist(item) },
+        ] : []),
         ...(item.tab === "torrents" && item.magnet_uri && onDownloadTorrent ? [
           { label: "Download", icon: <Download className="w-3.5 h-3.5" />, onClick: () => onDownloadTorrent(item) },
         ] : []),
@@ -153,7 +163,7 @@ export default function LibraryContent({
       ];
       setCtxMenu({ x: e.clientX, y: e.clientY, items: menuItems });
     },
-    [onItemPlay, onDownloadTorrent],
+    [onItemPlay, onDownloadTorrent, onAddItemToPlaylist],
   );
 
   const handleEmptyContext = useCallback(
@@ -193,14 +203,14 @@ export default function LibraryContent({
     <div className="flex-1 flex flex-col min-w-0">
       <div className="flex items-center justify-between gap-3 px-4 py-3 bg-black/20">
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--np-text-muted)]" />
           <input
             type="text"
             value={localSearch}
             onChange={(e) => handleSearchInput(e.target.value)}
             placeholder="Search..."
-            className="w-full bg-white/5 rounded-lg pl-8 pr-3 py-1.5
-                       text-[11px] text-white placeholder:text-white/25 outline-none
+            className="w-full bg-[var(--np-hover)] rounded-lg pl-8 pr-3 py-1.5
+                       text-[11px] text-[var(--np-text)] placeholder:text-[var(--np-text-muted)] outline-none
                        transition-colors duration-100"
           />
         </div>

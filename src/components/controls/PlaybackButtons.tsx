@@ -21,8 +21,8 @@ export default function PlaybackButtons({
   return (
     <>
       <motion.button
-        className="w-8 h-8 flex items-center justify-center text-white/80
-                   hover:text-white rounded-lg hover:bg-white/10 cursor-pointer
+        className="w-8 h-8 flex items-center justify-center text-[var(--np-text)]
+                   hover:text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                    transition-colors duration-100"
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}
@@ -33,8 +33,8 @@ export default function PlaybackButtons({
         <Seek10Icon direction="back" />
       </motion.button>
       <motion.button
-        className="w-9 h-9 flex items-center justify-center text-white rounded-lg
-                   hover:bg-white/10 cursor-pointer transition-colors duration-100"
+        className="w-9 h-9 flex items-center justify-center text-[var(--np-text)] rounded-lg
+                   hover:bg-[var(--np-hover)] cursor-pointer transition-colors duration-100"
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}
         onClick={onPlayPause}
@@ -49,8 +49,8 @@ export default function PlaybackButtons({
       </motion.button>
 
       <motion.button
-        className="w-8 h-8 flex items-center justify-center text-white/80
-                   hover:text-white rounded-lg hover:bg-white/10 cursor-pointer
+        className="w-8 h-8 flex items-center justify-center text-[var(--np-text)]
+                   hover:text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                    transition-colors duration-100"
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}

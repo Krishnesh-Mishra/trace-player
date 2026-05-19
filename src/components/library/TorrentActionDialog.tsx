@@ -78,7 +78,7 @@ export default function TorrentActionDialog({
             role="dialog"
             aria-modal="true"
             aria-label="Play torrent"
-            className="relative bg-[#111]  rounded-2xl shadow-2xl
+            className="relative bg-[var(--np-overlay)] rounded-2xl shadow-2xl
                        w-[340px] p-5"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}
@@ -87,21 +87,21 @@ export default function TorrentActionDialog({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-white/90">
+              <h3 className="text-sm font-medium text-[var(--np-text)]">
                 Play Torrent
               </h3>
               <button
                 onClick={onClose}
                 aria-label="Close"
-                className="w-6 h-6 flex items-center justify-center text-white/40
-                           hover:text-white rounded-md hover:bg-white/10 cursor-pointer
+                className="w-6 h-6 flex items-center justify-center text-[var(--np-text-tertiary)]
+                           hover:text-[var(--np-text)] rounded-md hover:bg-[var(--np-hover)] cursor-pointer
                            transition-colors duration-100"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <p className="text-[11px] text-white/50 mb-4 truncate">
+            <p className="text-[11px] text-[var(--np-text-tertiary)] mb-4 truncate">
               {item.title}
             </p>
 
@@ -112,13 +112,13 @@ export default function TorrentActionDialog({
                   onClose();
                 }}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-lg
-                            bg-white/[0.03] hover:bg-white/[0.08]
+                            bg-[var(--np-hover)] hover:bg-[var(--np-hover)]
                            cursor-pointer transition-colors duration-100"
               >
-                <Play className="w-5 h-5 text-white/50" />
+                <Play className="w-5 h-5 text-[var(--np-text-tertiary)]" />
                 <div className="text-left">
-                  <p className="text-xs text-white/80">Stream Now</p>
-                  <p className="text-[10px] text-white/40">
+                  <p className="text-xs text-[var(--np-text)]">Stream Now</p>
+                  <p className="text-[10px] text-[var(--np-text-tertiary)]">
                     Play immediately via streaming
                   </p>
                 </div>
@@ -129,13 +129,13 @@ export default function TorrentActionDialog({
                   onClose();
                 }}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-lg
-                            bg-white/[0.03] hover:bg-white/[0.08]
+                            bg-[var(--np-hover)] hover:bg-[var(--np-hover)]
                            cursor-pointer transition-colors duration-100"
               >
-                <Download className="w-5 h-5 text-white/50" />
+                <Download className="w-5 h-5 text-[var(--np-text-tertiary)]" />
                 <div className="text-left">
-                  <p className="text-xs text-white/80">Download First</p>
-                  <p className="text-[10px] text-white/40">
+                  <p className="text-xs text-[var(--np-text)]">Download First</p>
+                  <p className="text-[10px] text-[var(--np-text-tertiary)]">
                     Download to disk, then play locally
                   </p>
                 </div>

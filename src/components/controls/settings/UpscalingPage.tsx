@@ -49,7 +49,7 @@ export default function UpscalingPage({
       </div>
 
       {pipeline && (
-        <div className="px-3 pb-3 pt-2 border-t border-white/8 space-y-0.5">
+        <div className="px-3 pb-3 pt-2 border-t border-[var(--np-divider)] space-y-0.5">
           <StatRow label="Active scaler" value={pipeline.scale} />
           <StatRow label="Chroma scaler" value={pipeline.cscale} />
           <StatRow

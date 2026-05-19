@@ -490,6 +490,18 @@ export function useLibrary(open: boolean) {
     }
   }, []);
 
+  const getItemsInFolder = useCallback(async (fId: number): Promise<LibraryItem[]> => {
+    try {
+      const db = await getDb();
+      return await db.select<LibraryItem[]>(
+        "SELECT * FROM items WHERE folder_id = $1 ORDER BY title",
+        [fId],
+      );
+    } catch {
+      return [];
+    }
+  }, []);
+
   return {
     tab,
     setTab,
@@ -519,6 +531,7 @@ export function useLibrary(open: boolean) {
     updateItemThumb,
     markPlayed,
     getRecentItems,
+    getItemsInFolder,
     folderPreviews,
     refresh: fetchContents,
   };

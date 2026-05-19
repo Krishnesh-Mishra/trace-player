@@ -24,13 +24,13 @@ export default function Toggle({ enabled, onToggle, size = "sm" }: Props) {
         onToggle();
       }}
       className={`shrink-0 relative rounded-full cursor-pointer transition-colors duration-150 ${
-        enabled ? "bg-white/85" : "bg-white/20"
+        enabled ? "bg-[var(--np-toggle-on)]" : "bg-[var(--np-toggle-off)]"
       }`}
       style={{ width: trackW, height: trackH }}
       aria-pressed={enabled}
     >
       <motion.span
-        className={`absolute rounded-full ${enabled ? "bg-black" : "bg-white"}`}
+        className={`absolute rounded-full ${enabled ? "bg-[var(--np-toggle-dot-on)]" : "bg-[var(--np-toggle-dot-off)]"}`}
         style={{ width: thumb, height: thumb, top: offset }}
         animate={{ left: enabled ? onLeft : offset }}
         transition={{ type: "spring", stiffness: 500, damping: 30 }}

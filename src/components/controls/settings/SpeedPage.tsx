@@ -34,7 +34,7 @@ export default function SpeedPage({
           <motion.button
             key={s}
             className="w-full flex items-center justify-between px-3 py-2
-                       text-sm text-white/90 rounded-lg hover:bg-white/10 cursor-pointer
+                       text-sm text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                        transition-colors duration-100"
             whileTap={{ scale: 0.97 }}
             onClick={() => {
@@ -49,7 +49,7 @@ export default function SpeedPage({
                 animate={{ scale: 1 }}
                 transition={{ type: "spring", stiffness: 500, damping: 25 }}
               >
-                <Check className="w-3.5 h-3.5 text-white/70" />
+                <Check className="w-3.5 h-3.5 text-[var(--np-text-secondary)]" />
               </motion.div>
             )}
           </motion.button>

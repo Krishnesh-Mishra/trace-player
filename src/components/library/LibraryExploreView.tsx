@@ -93,15 +93,15 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
       <div className="px-4 py-3 bg-black/20">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--np-text-muted)]" />
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void handleSearch()}
               placeholder="Search a folder path or browse videos below..."
-              className="w-full bg-white/5 rounded-lg pl-10 pr-3 py-2
-                         text-xs text-white placeholder:text-white/25 outline-none
+              className="w-full bg-[var(--np-hover)] rounded-lg pl-10 pr-3 py-2
+                         text-xs text-[var(--np-text)] placeholder:text-[var(--np-text-muted)] outline-none
                          transition-colors duration-100"
             />
           </div>
@@ -119,17 +119,17 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
       <div className="flex-1 overflow-y-auto px-4 py-3">
         {isLoading && (
           <div className="flex items-center justify-center py-12">
-            <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+            <div className="w-5 h-5 border-2 border-[var(--np-divider)] border-t-[var(--np-text-secondary)] rounded-full animate-spin" />
           </div>
         )}
 
         {!isLoading && displayResults.length === 0 && !searched && (
           <div className="flex flex-col items-center justify-center py-16 text-center">
-            <Search className="w-10 h-10 text-white/15 mb-3" />
-            <p className="text-sm text-white/30">
+            <Search className="w-10 h-10 text-[var(--np-text-muted)] mb-3" />
+            <p className="text-sm text-[var(--np-text-muted)]">
               No video files found on this PC
             </p>
-            <p className="text-[10px] text-white/20 mt-1">
+            <p className="text-[10px] text-[var(--np-text-muted)] mt-1">
               Try scanning a specific folder above
             </p>
           </div>
@@ -137,7 +137,7 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
 
         {!isLoading && searched && results.length === 0 && (
           <div className="flex items-center justify-center py-12">
-            <p className="text-sm text-white/30">
+            <p className="text-sm text-[var(--np-text-muted)]">
               No video files found in that location
             </p>
           </div>
@@ -146,7 +146,7 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
         {!isLoading && displayResults.length > 0 && (
           <>
             {!searched && (
-              <p className="text-[10px] text-white/30 uppercase tracking-wider mb-3">
+              <p className="text-[10px] text-[var(--np-text-muted)] uppercase tracking-wider mb-3">
                 Videos on this PC
               </p>
             )}
@@ -158,7 +158,7 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
                   whileTap={{ scale: 0.97 }}
                   onClick={() => onPlayFile(video.path)}
                 >
-                  <div className="relative aspect-video rounded-lg overflow-hidden bg-white/5">
+                  <div className="relative aspect-video rounded-lg overflow-hidden bg-[var(--np-hover)]">
                     {thumbCache.has(video.path) ? (
                       <img
                         src={thumbCache.get(video.path)}
@@ -167,22 +167,22 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
                       />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
-                        <Film className="w-8 h-8 text-white/15" />
+                        <Film className="w-8 h-8 text-[var(--np-text-muted)]" />
                       </div>
                     )}
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40
                                     transition-colors duration-150 flex items-center justify-center">
                       <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                        <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm
+                        <div className="w-10 h-10 rounded-full bg-[var(--np-selected)] backdrop-blur-sm
                                         flex items-center justify-center">
-                          <Play className="w-5 h-5 text-white fill-white" />
+                          <Play className="w-5 h-5 text-[var(--np-text)] fill-[var(--np-text)]" />
                         </div>
                       </div>
                     </div>
                   </div>
                   <div className="mt-1.5 px-0.5">
-                    <p className="text-xs text-white/80 truncate">{video.name}</p>
-                    <p className="text-[10px] text-white/40 mt-0.5">
+                    <p className="text-xs text-[var(--np-text)] truncate">{video.name}</p>
+                    <p className="text-[10px] text-[var(--np-text-tertiary)] mt-0.5">
                       {fmtSize(video.size)}
                     </p>
                   </div>

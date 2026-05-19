@@ -98,7 +98,7 @@ export default function AppContextMenu({
     <AnimatePresence>
       <motion.div
         ref={menuRef}
-        className="fixed z-[200] origin-top-left min-w-[180px] py-1 bg-[#1a1a1a]
+        className="fixed z-[200] origin-top-left min-w-[180px] py-1 bg-[var(--np-surface)]
                    rounded-lg shadow-xl shadow-black/50 backdrop-blur-sm"
         style={{ left: clampedX, top: clampedY }}
         initial={{ opacity: 0, scale: 0.92 }}
@@ -111,14 +111,14 @@ export default function AppContextMenu({
             <button
               onClick={() => act(onPlayPause)}
               className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[11px]
-                         text-white/80 hover:bg-white/10 transition-colors duration-75 cursor-pointer"
+                         text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)] transition-colors duration-75 cursor-pointer"
             >
               {isPlaying ? <Pause className="w-3.5 h-3.5 opacity-70" /> : <Play className="w-3.5 h-3.5 opacity-70" />}
               <span className="flex-1">{isPlaying ? "Pause" : "Play"}</span>
-              <span className="text-[10px] text-white/30">Space</span>
+              <span className="text-[10px] text-[var(--np-text-muted)]">Space</span>
             </button>
 
-            <div className="h-px bg-white/8 my-1 mx-2" />
+            <div className="h-px bg-[var(--np-divider)] my-1 mx-2" />
 
             {/* Speed submenu */}
             <div
@@ -127,17 +127,17 @@ export default function AppContextMenu({
               onMouseLeave={() => setSubmenu((s) => s === "speed" ? null : s)}
             >
               <div className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[11px]
-                              text-white/80 hover:bg-white/10 transition-colors duration-75 cursor-pointer">
+                              text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)] transition-colors duration-75 cursor-pointer">
                 <Gauge className="w-3.5 h-3.5 opacity-70" />
                 <span className="flex-1">Speed</span>
-                <span className="text-[10px] text-white/40">{playbackSpeed}x</span>
-                <ChevronRight className="w-3 h-3 text-white/30" />
+                <span className="text-[10px] text-[var(--np-text-tertiary)]">{playbackSpeed}x</span>
+                <ChevronRight className="w-3 h-3 text-[var(--np-text-muted)]" />
               </div>
               <AnimatePresence>
                 {submenu === "speed" && (
                   <motion.div
-                    className="absolute left-full top-0 ml-1 min-w-[100px] py-1 bg-[#1a1a1a]
-                               border border-white/12 rounded-lg shadow-xl"
+                    className="absolute left-full top-0 ml-1 min-w-[100px] py-1 bg-[var(--np-surface)]
+ rounded-lg shadow-xl"
                     initial={{ opacity: 0, scale: 0.95, x: -4 }}
                     animate={{ opacity: 1, scale: 1, x: 0 }}
                     exit={{ opacity: 0, scale: 0.95, x: -4 }}
@@ -149,7 +149,7 @@ export default function AppContextMenu({
                         onClick={() => act(() => onSpeedChange(s))}
                         className={`w-full px-3 py-1 text-left text-[11px] cursor-pointer
                                     transition-colors duration-75
-                                    ${s === playbackSpeed ? "text-white bg-white/10" : "text-white/70 hover:bg-white/10"}`}
+                                    ${s === playbackSpeed ? "text-[var(--np-text)] bg-[var(--np-hover)]" : "text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)]"}`}
                       >
                         {s}x
                       </button>
@@ -167,16 +167,16 @@ export default function AppContextMenu({
                 onMouseLeave={() => setSubmenu((s) => s === "audio" ? null : s)}
               >
                 <div className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[11px]
-                                text-white/80 hover:bg-white/10 transition-colors duration-75 cursor-pointer">
+                                text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)] transition-colors duration-75 cursor-pointer">
                   <Volume2 className="w-3.5 h-3.5 opacity-70" />
                   <span className="flex-1">Audio</span>
-                  <ChevronRight className="w-3 h-3 text-white/30" />
+                  <ChevronRight className="w-3 h-3 text-[var(--np-text-muted)]" />
                 </div>
                 <AnimatePresence>
                   {submenu === "audio" && (
                     <motion.div
-                      className="absolute left-full top-0 ml-1 min-w-[140px] py-1 bg-[#1a1a1a]
-                                 border border-white/12 rounded-lg shadow-xl max-h-60 overflow-y-auto"
+                      className="absolute left-full top-0 ml-1 min-w-[140px] py-1 bg-[var(--np-surface)]
+                                 rounded-lg shadow-xl max-h-60 overflow-y-auto"
                       initial={{ opacity: 0, scale: 0.95, x: -4 }}
                       animate={{ opacity: 1, scale: 1, x: 0 }}
                       exit={{ opacity: 0, scale: 0.95, x: -4 }}
@@ -188,7 +188,7 @@ export default function AppContextMenu({
                           onClick={() => act(() => onAudioTrackChange(String(t.id)))}
                           className={`w-full px-3 py-1.5 text-left text-[11px] cursor-pointer
                                       transition-colors duration-75 truncate
-                                      ${String(t.id) === selectedAudioId ? "text-white bg-white/10" : "text-white/70 hover:bg-white/10"}`}
+                                      ${String(t.id) === selectedAudioId ? "text-[var(--np-text)] bg-[var(--np-hover)]" : "text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)]"}`}
                         >
                           {trackLabel(t)}
                         </button>
@@ -207,16 +207,16 @@ export default function AppContextMenu({
                 onMouseLeave={() => setSubmenu((s) => s === "subtitle" ? null : s)}
               >
                 <div className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[11px]
-                                text-white/80 hover:bg-white/10 transition-colors duration-75 cursor-pointer">
+                                text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)] transition-colors duration-75 cursor-pointer">
                   <Subtitles className="w-3.5 h-3.5 opacity-70" />
                   <span className="flex-1">Subtitles</span>
-                  <ChevronRight className="w-3 h-3 text-white/30" />
+                  <ChevronRight className="w-3 h-3 text-[var(--np-text-muted)]" />
                 </div>
                 <AnimatePresence>
                   {submenu === "subtitle" && (
                     <motion.div
-                      className="absolute left-full top-0 ml-1 min-w-[140px] py-1 bg-[#1a1a1a]
-                                 border border-white/12 rounded-lg shadow-xl max-h-60 overflow-y-auto"
+                      className="absolute left-full top-0 ml-1 min-w-[140px] py-1 bg-[var(--np-surface)]
+                                 rounded-lg shadow-xl max-h-60 overflow-y-auto"
                       initial={{ opacity: 0, scale: 0.95, x: -4 }}
                       animate={{ opacity: 1, scale: 1, x: 0 }}
                       exit={{ opacity: 0, scale: 0.95, x: -4 }}
@@ -226,7 +226,7 @@ export default function AppContextMenu({
                         onClick={() => act(() => onSubtitleTrackChange("no"))}
                         className={`w-full px-3 py-1.5 text-left text-[11px] cursor-pointer
                                     transition-colors duration-75
-                                    ${selectedSubId === "no" ? "text-white bg-white/10" : "text-white/70 hover:bg-white/10"}`}
+                                    ${selectedSubId === "no" ? "text-[var(--np-text)] bg-[var(--np-hover)]" : "text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)]"}`}
                       >
                         None
                       </button>
@@ -236,7 +236,7 @@ export default function AppContextMenu({
                           onClick={() => act(() => onSubtitleTrackChange(String(t.id)))}
                           className={`w-full px-3 py-1.5 text-left text-[11px] cursor-pointer
                                       transition-colors duration-75 truncate
-                                      ${String(t.id) === selectedSubId ? "text-white bg-white/10" : "text-white/70 hover:bg-white/10"}`}
+                                      ${String(t.id) === selectedSubId ? "text-[var(--np-text)] bg-[var(--np-hover)]" : "text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)]"}`}
                         >
                           {trackLabel(t)}
                         </button>
@@ -247,13 +247,13 @@ export default function AppContextMenu({
               </div>
             )}
 
-            <div className="h-px bg-white/8 my-1 mx-2" />
+            <div className="h-px bg-[var(--np-divider)] my-1 mx-2" />
 
             {onAddToPlaylist && (
               <button
                 onClick={() => act(onAddToPlaylist)}
                 className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[11px]
-                           text-white/80 hover:bg-white/10 transition-colors duration-75 cursor-pointer"
+                           text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)] transition-colors duration-75 cursor-pointer"
               >
                 <ListPlus className="w-3.5 h-3.5 opacity-70" />
                 <span className="flex-1">Add to Playlist</span>
@@ -263,17 +263,17 @@ export default function AppContextMenu({
             <button
               onClick={() => act(onMediaInfo)}
               className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[11px]
-                         text-white/80 hover:bg-white/10 transition-colors duration-75 cursor-pointer"
+                         text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)] transition-colors duration-75 cursor-pointer"
             >
               <Info className="w-3.5 h-3.5 opacity-70" />
               <span className="flex-1">Properties</span>
-              <span className="text-[10px] text-white/30">Ctrl+I</span>
+              <span className="text-[10px] text-[var(--np-text-muted)]">Ctrl+I</span>
             </button>
           </>
         )}
 
         {!hasFile && (
-          <div className="px-3 py-2 text-[11px] text-white/40">
+          <div className="px-3 py-2 text-[11px] text-[var(--np-text-tertiary)]">
             No file loaded
           </div>
         )}

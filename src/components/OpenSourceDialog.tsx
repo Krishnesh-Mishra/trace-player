@@ -124,7 +124,7 @@ export default function OpenSourceDialog({ open, onSubmit, onClose }: Props) {
             role="dialog"
             aria-modal="true"
             aria-label="Open source"
-            className="bg-[#111]/95 backdrop-blur-xl  rounded-2xl
+            className="bg-[var(--np-overlay)] backdrop-blur-xl rounded-2xl
                        shadow-2xl p-5 w-[460px] max-w-[92vw] flex flex-col gap-4"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}
@@ -133,8 +133,8 @@ export default function OpenSourceDialog({ open, onSubmit, onClose }: Props) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex flex-col gap-1">
-              <span className="text-sm font-medium text-white">Open source</span>
-              <span className="text-[10px] text-white/40">
+              <span className="text-sm font-medium text-[var(--np-text)]">Open source</span>
+              <span className="text-[10px] text-[var(--np-text-tertiary)]">
                 Paste a magnet link, stream URL (http/https/rtsp/rtmp/mms), or pick a .torrent file
               </span>
             </div>
@@ -148,12 +148,12 @@ export default function OpenSourceDialog({ open, onSubmit, onClose }: Props) {
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
-              className={`w-full bg-white/8 border rounded-lg px-3 py-2 text-sm text-white
-                          placeholder:text-white/25 outline-none focus:ring-1 truncate
+              className={`w-full bg-[var(--np-hover)] rounded-lg px-3 py-2 text-sm text-[var(--np-text)]
+                          placeholder:text-[var(--np-text-muted)] outline-none focus:ring-1 truncate
                           transition-colors duration-100
                           ${error
-                            ? "border-red-500/60 focus:ring-red-500/40"
-                            : "border-white/10 focus:border-white/30 focus:ring-white/20"
+                            ? "ring-1 ring-red-500/60 focus:ring-red-500/40"
+                            : "focus:ring-[var(--np-active)]"
                           }`}
             />
 
@@ -161,7 +161,7 @@ export default function OpenSourceDialog({ open, onSubmit, onClose }: Props) {
               <button
                 onClick={pickTorrent}
                 className="w-full flex items-center justify-center gap-2 py-2
-                           bg-white/8 hover:bg-white/15 text-xs text-white/85
+                           bg-[var(--np-hover)] hover:bg-[var(--np-active)] text-xs text-[var(--np-text)]
                            rounded-lg cursor-pointer transition-colors duration-100"
               >
                 <FolderOpen className="w-3.5 h-3.5" />
@@ -177,8 +177,8 @@ export default function OpenSourceDialog({ open, onSubmit, onClose }: Props) {
               <button
                 onClick={onClose}
                 disabled={busy}
-                className="px-3 py-1.5 text-xs text-white/50 hover:text-white/80
-                           rounded-lg hover:bg-white/8 transition-colors duration-100 cursor-pointer
+                className="px-3 py-1.5 text-xs text-[var(--np-text-tertiary)] hover:text-[var(--np-text)]
+                           rounded-lg hover:bg-[var(--np-hover)] transition-colors duration-100 cursor-pointer
                            disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Cancel
@@ -187,8 +187,8 @@ export default function OpenSourceDialog({ open, onSubmit, onClose }: Props) {
                 <button
                   onClick={() => void submit(true)}
                   disabled={busy}
-                  className="px-3 py-1.5 text-xs font-medium text-white/85
-                              hover:border-white/35 hover:bg-white/8
+                  className="px-3 py-1.5 text-xs font-medium text-[var(--np-text)]
+                              hover:bg-[var(--np-hover)]
                              rounded-lg transition-all duration-100 cursor-pointer
                              disabled:opacity-40 disabled:cursor-not-allowed"
                 >

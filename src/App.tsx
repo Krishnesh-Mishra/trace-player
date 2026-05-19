@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -34,7 +34,8 @@ import OpenSourceDialog from "./components/OpenSourceDialog";
 import LoadingSourceOverlay from "./components/LoadingSourceOverlay";
 import BufferingBanner from "./components/BufferingBanner";
 import RecentSourcesPanel from "./components/RecentSourcesPanel";
-import { ACCENT_PALETTE, DENSE_LRU_MAX, denseBucket } from "./components/types";
+import { DENSE_LRU_MAX, denseBucket } from "./components/types";
+import { useTheme } from "./hooks/useTheme";
 import { log } from "./lib/log";
 
 import SubtitleSettingsPanel, {
@@ -76,6 +77,7 @@ const HIDE_DELAY_MS = 2000;
 const DORMANCY_DELAY_MS = 4000;
 
 export default function App() {
+  const { theme, setTheme } = useTheme();
   const [hasFile, setHasFile] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   // Loading splash: covers the transparent window between when the user
@@ -165,6 +167,7 @@ export default function App() {
   const [openSourceOpen, setOpenSourceOpen] = useState(false);
   const [recentPanelOpen, setRecentPanelOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryInitialTab, setLibraryInitialTab] = useState<"settings" | null>(null);
   // Buffering visibility is owned by BufferingBanner (it listens to
   // mpv:paused-for-cache + mpv:torrent-stats itself), so App.tsx no longer
   // needs the bufferingForCache state — kept as a no-op here only because
@@ -834,14 +837,6 @@ export default function App() {
     storeRef.current.set("pipMode", pipMode).then(() => saveStore()).catch(() => {});
   }, [pipMode]);
 
-  // Apply accent color as CSS custom property so any component (Timeline
-  // fill, A-B / loop button, playlist active row) can pick it up without
-  // prop-drilling. --np-accent-soft is a translucent backdrop for chips.
-  useEffect(() => {
-    const palette = ACCENT_PALETTE[appearance.accent];
-    document.documentElement.style.setProperty("--np-accent", palette.hex);
-    document.documentElement.style.setProperty("--np-accent-soft", palette.soft);
-  }, [appearance.accent]);
 
   // Whenever loop mode changes (incl. initial load), push to mpv. Two
   // independent properties — file and playlist — both off when "off".
@@ -1860,7 +1855,60 @@ export default function App() {
   const openJumpToTime = useCallback(() => setJumpToTimeOpen(true), []);
   const openSourceNetwork = useCallback(() => setOpenSourceOpen(true), []);
   const openSourceRecent = useCallback(() => setRecentPanelOpen(true), []);
-  const openLibrary = useCallback(() => setLibraryOpen(true), []);
+  const openLibrary = useCallback(() => {
+    setLibraryInitialTab(null);
+    setLibraryOpen(true);
+  }, []);
+  const openSettings = useCallback(() => {
+    setLibraryInitialTab("settings");
+    setLibraryOpen(true);
+  }, []);
+
+  const settingsBundle = useMemo(() => ({
+    appearance,
+    theme,
+    onThemeChange: setTheme,
+    hdrMode,
+    hdrInfo,
+    upscaling,
+    interpolation,
+    vsync,
+    exclusiveFullscreen,
+    perfProfile,
+    perfEffective,
+    onBattery,
+    audioFx,
+    audioDevice,
+    monoAudio,
+    dynamicAudio,
+    deinterlace,
+    screenshotDir,
+    alwaysOnTop,
+    loopMode,
+    onAppearanceChange: setAppearance,
+    onHdrModeChange: handleHdrModeChange,
+    onUpscalingChange: handleUpscalingChange,
+    onInterpolationChange: handleInterpolationChange,
+    onVsyncChange: handleVsyncChange,
+    onExclusiveFullscreenChange: handleExclusiveFullscreenChange,
+    onPerfProfileChange: handlePerfProfileChange,
+    onAudioFxChange: handleAudioFxChange,
+    onAudioDeviceChange: handleAudioDeviceChange,
+    onMonoAudioToggle: handleMonoAudioToggle,
+    onDynamicAudioChange: handleDynamicAudioChange,
+    onDeinterlaceToggle: handleDeinterlaceToggle,
+    onPickScreenshotDir: pickScreenshotDir,
+    onAlwaysOnTopToggle: handleAlwaysOnTopToggle,
+    onLoopCycle: cycleLoop,
+  }), [appearance, theme, setTheme, hdrMode, hdrInfo, upscaling, interpolation, vsync,
+       exclusiveFullscreen, perfProfile, perfEffective, onBattery, audioFx,
+       audioDevice, monoAudio, dynamicAudio, deinterlace, screenshotDir,
+       alwaysOnTop, loopMode,
+       setAppearance, handleHdrModeChange, handleUpscalingChange,
+       handleInterpolationChange, handleVsyncChange, handleExclusiveFullscreenChange,
+       handlePerfProfileChange, handleAudioFxChange, handleAudioDeviceChange,
+       handleMonoAudioToggle, handleDynamicAudioChange, handleDeinterlaceToggle,
+       pickScreenshotDir, handleAlwaysOnTopToggle, cycleLoop]);
 
   return (
     <div
@@ -1927,8 +1975,8 @@ export default function App() {
                 </button>
                 <button
                   onClick={() => setOpenSourceOpen(true)}
-                  className="px-4 py-2 bg-white/10 text-white text-sm font-medium rounded-lg
-                              hover:bg-white/15 active:scale-95
+                  className="px-4 py-2 bg-[var(--np-hover)] text-[var(--np-text)] text-sm font-medium rounded-lg
+                              hover:bg-[var(--np-active)] active:scale-95
                              transition-all duration-100"
                 >
                   Open URL or Torrent
@@ -1952,7 +2000,7 @@ export default function App() {
                       <div
                         key={p}
                         className="group flex items-center gap-1 rounded-md
-                                   hover:bg-white/8 transition-colors duration-100"
+                                   hover:bg-[var(--np-hover)] transition-colors duration-100"
                       >
                         <button
                           onClick={() =>
@@ -2023,8 +2071,8 @@ export default function App() {
               transition={{ delay: 0.05, duration: 0.25 }}
               className="flex flex-col items-center gap-3"
             >
-              <Loader2 className="w-9 h-9 text-white/85 animate-spin" />
-              <p className="text-white/70 text-xs tracking-wide select-none">
+              <Loader2 className="w-9 h-9 text-[var(--np-text)] animate-spin" />
+              <p className="text-[var(--np-text-secondary)] text-xs tracking-wide select-none">
                 Loading…
               </p>
             </motion.div>
@@ -2054,7 +2102,7 @@ export default function App() {
             className="absolute top-4 left-1/2 -translate-x-1/2 z-40
                        flex items-center gap-2 px-3.5 py-1.5 rounded-full
                        bg-black/75 backdrop-blur-md 
-                       text-white/85 select-none pointer-events-none"
+                       text-[var(--np-text)] select-none pointer-events-none"
           >
             <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
             <span className="text-[12px] font-medium">Seeking…</span>
@@ -2125,14 +2173,12 @@ export default function App() {
             perfProfile={perfProfile}
             perfEffective={perfEffective}
             onBattery={onBattery}
-            screenshotDir={screenshotDir}
             audioFx={audioFx}
             abLoopActive={abLoopA !== null || abLoopB !== null}
             appearance={appearance}
             chapters={chapters}
             loopMode={loopMode}
             playlistCount={playlist.length}
-            onAppearanceChange={setAppearance}
             alwaysOnTop={alwaysOnTop}
             onAlwaysOnTopToggle={handleAlwaysOnTopToggle}
             onMediaInfo={openMediaInfo}
@@ -2154,7 +2200,6 @@ export default function App() {
             audioDevice={audioDevice}
             onAudioDeviceChange={handleAudioDeviceChange}
             onScreenshot={takeScreenshot}
-            onPickScreenshotDir={pickScreenshotDir}
             onAbLoopCycle={cycleAbLoop}
             onPlayPause={playPause}
             onVolumeChange={handleVolumeChange}
@@ -2176,6 +2221,7 @@ export default function App() {
             onSourceNetwork={openSourceNetwork}
             onSourceRecent={openSourceRecent}
             onLibraryOpen={openLibrary}
+            onOpenSettings={openSettings}
             showThumbnails={isLocalFile && hoverPreview}
           />
         )}
@@ -2232,7 +2278,12 @@ export default function App() {
 
       <LibraryModal
         open={libraryOpen}
-        onClose={() => setLibraryOpen(false)}
+        initialTab={libraryInitialTab}
+        settingsBundle={settingsBundle}
+        onClose={() => {
+          setLibraryOpen(false);
+          setLibraryInitialTab(null);
+        }}
         onPlayFile={(path) => {
           setLibraryOpen(false);
           void loadPath(path);
@@ -2273,21 +2324,21 @@ export default function App() {
         {isDragOver && (
           <motion.div
             key="drag-overlay"
-            className="absolute inset-0 z-40 border-2 border-dashed border-white/40
-                       bg-white/5 flex items-center justify-center pointer-events-none"
+            className="absolute inset-0 z-40 border-2 border-dashed border-[var(--np-text-tertiary)]
+                       bg-[var(--np-hover)] flex items-center justify-center pointer-events-none"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
             <div className="flex flex-col items-center gap-2">
-              <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center">
+              <div className="w-12 h-12 rounded-full bg-[var(--np-hover)] flex items-center justify-center">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}
-                     className="w-6 h-6 text-white/70">
+                     className="w-6 h-6 text-[var(--np-text-secondary)]">
                   <path strokeLinecap="round" strokeLinejoin="round"
                         d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                 </svg>
               </div>
-              <span className="text-sm text-white/70">Drop to open</span>
+              <span className="text-sm text-[var(--np-text-secondary)]">Drop to open</span>
             </div>
           </motion.div>
         )}

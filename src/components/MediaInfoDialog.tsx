@@ -66,9 +66,9 @@ function fmtBitrate(bps: number | null): string {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-start justify-between py-1.5 border-b border-white/5 last:border-0">
-      <span className="text-[11px] text-white/40 shrink-0 mr-4">{label}</span>
-      <span className="text-[11px] text-white/80 text-right break-all">{value || "—"}</span>
+    <div className="flex items-start justify-between py-1.5 border-b border-[var(--np-divider)] last:border-0">
+      <span className="text-[11px] text-[var(--np-text-tertiary)] shrink-0 mr-4">{label}</span>
+      <span className="text-[11px] text-[var(--np-text)] text-right break-all">{value || "—"}</span>
     </div>
   );
 }
@@ -114,7 +114,7 @@ export default function MediaInfoDialog({ open, onClose }: Props) {
             role="dialog"
             aria-modal="true"
             aria-label="Media information"
-            className="bg-[#111]/92 backdrop-blur-xl  rounded-2xl
+            className="bg-[var(--np-overlay)] backdrop-blur-xl rounded-2xl
                        shadow-2xl w-80 max-h-[70vh] flex flex-col overflow-hidden"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}
@@ -122,13 +122,13 @@ export default function MediaInfoDialog({ open, onClose }: Props) {
             transition={{ type: "spring", stiffness: 380, damping: 28 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-4 h-11 border-b border-white/8 shrink-0">
-              <span className="text-xs font-medium text-white">Media Info</span>
+            <div className="flex items-center justify-between px-4 h-11 border-b border-[var(--np-divider)] shrink-0">
+              <span className="text-xs font-medium text-[var(--np-text)]">Media Info</span>
               <button
                 onClick={onClose}
                 aria-label="Close"
-                className="w-6 h-6 flex items-center justify-center text-white/40
-                           hover:text-white rounded-md hover:bg-white/10 cursor-pointer
+                className="w-6 h-6 flex items-center justify-center text-[var(--np-text-tertiary)]
+                           hover:text-[var(--np-text)] rounded-md hover:bg-[var(--np-hover)] cursor-pointer
                            transition-colors duration-100"
               >
                 <X className="w-3.5 h-3.5" />
@@ -137,13 +137,13 @@ export default function MediaInfoDialog({ open, onClose }: Props) {
 
             <div className="flex-1 overflow-y-auto px-4 py-3">
               {!info ? (
-                <p className="text-[11px] text-white/30 text-center py-4">Loading…</p>
+                <p className="text-[11px] text-[var(--np-text-muted)] text-center py-4">Loading…</p>
               ) : (
                 <>
-                  <p className="text-[11px] text-white/60 mb-3 break-all leading-snug">{baseName}</p>
+                  <p className="text-[11px] text-[var(--np-text-secondary)] mb-3 break-all leading-snug">{baseName}</p>
 
                   <div className="mb-3">
-                    <p className="text-[9px] text-white/25 uppercase tracking-wider mb-1">Video</p>
+                    <p className="text-[9px] text-[var(--np-text-muted)] uppercase tracking-wider mb-1">Video</p>
                     <Row label="Codec" value={info.video_codec} />
                     <Row
                       label="Resolution"
@@ -161,7 +161,7 @@ export default function MediaInfoDialog({ open, onClose }: Props) {
                   </div>
 
                   <div className="mb-3">
-                    <p className="text-[9px] text-white/25 uppercase tracking-wider mb-1">Audio</p>
+                    <p className="text-[9px] text-[var(--np-text-muted)] uppercase tracking-wider mb-1">Audio</p>
                     <Row label="Codec" value={info.audio_codec} />
                     <Row label="Channels" value={info.audio_channels} />
                     <Row
@@ -172,7 +172,7 @@ export default function MediaInfoDialog({ open, onClose }: Props) {
                   </div>
 
                   <div>
-                    <p className="text-[9px] text-white/25 uppercase tracking-wider mb-1">File</p>
+                    <p className="text-[9px] text-[var(--np-text-muted)] uppercase tracking-wider mb-1">File</p>
                     <Row label="Container" value={info.container} />
                     <Row
                       label="Duration"

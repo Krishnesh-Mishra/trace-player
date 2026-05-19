@@ -69,9 +69,9 @@ function VolumeSlider({
       }}
       onPointerUp={() => setDragging(false)}
     >
-      <div className="w-full h-[3px] rounded-full bg-white/20">
+      <div className="w-full h-[3px] rounded-full bg-[var(--np-selected)]">
         <motion.div
-          className="h-full bg-white/80 rounded-full"
+          className="h-full bg-[var(--np-text)] rounded-full"
           animate={{ width: `${value}%` }}
           transition={{ type: "spring", stiffness: 600, damping: 50 }}
         />
@@ -92,8 +92,8 @@ export default function VolumeControl({ volume, muted, onMuteToggle, onVolumeCha
   return (
     <div className="flex items-center gap-2">
       <motion.button
-        className="w-8 h-8 flex items-center justify-center text-white/70
-                   hover:text-white rounded-lg hover:bg-white/10 cursor-pointer
+        className="w-8 h-8 flex items-center justify-center text-[var(--np-text-secondary)]
+                   hover:text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                    transition-colors duration-100"
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}

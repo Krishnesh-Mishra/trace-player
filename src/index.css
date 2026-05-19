@@ -1,12 +1,137 @@
 @import "tailwindcss";
+@import "@heroui/styles";
 
-/* Accent color, overridden at runtime from the user's Appearance preference.
-   White is the pre-React default so the Timeline fill, A-B / loop button
-   highlight, and playlist active row all paint correctly during the brief
-   window before App.tsx applies the saved palette. */
+/* ── Theme tokens ────────────────────────────────────────────────────────────
+   Every color in the UI references these variables. Themes override them
+   via [data-theme="…"] blocks below. The :root values = dark-translucent
+   (the default / current look). */
+
 :root {
+  /* Surfaces */
+  --np-bg: #0c0c0c;
+  --np-surface: #111111;
+  --np-surface-alt: #0a0a0a;
+  --np-overlay: rgba(17, 17, 17, 0.85);
+  --np-overlay-heavy: rgba(17, 17, 17, 0.95);
+
+  /* Text */
+  --np-text: rgba(255, 255, 255, 0.90);
+  --np-text-secondary: rgba(255, 255, 255, 0.60);
+  --np-text-tertiary: rgba(255, 255, 255, 0.45);
+  --np-text-muted: rgba(255, 255, 255, 0.30);
+
+  /* Interactive */
+  --np-hover: rgba(255, 255, 255, 0.10);
+  --np-active: rgba(255, 255, 255, 0.15);
+  --np-selected: rgba(255, 255, 255, 0.20);
+
+  /* Accent — theme-derived, no user picker */
   --np-accent: #ffffff;
   --np-accent-soft: rgba(255, 255, 255, 0.18);
+
+  /* Divider */
+  --np-divider: rgba(255, 255, 255, 0.08);
+
+  /* Scrollbar */
+  --np-scrollbar: rgba(255, 255, 255, 0.12);
+  --np-scrollbar-hover: rgba(255, 255, 255, 0.22);
+
+  /* Controls */
+  --np-control-bg: rgba(255, 255, 255, 0.20);
+  --np-control-fill: rgba(255, 255, 255, 0.85);
+  --np-control-thumb: #ffffff;
+  --np-toggle-on: rgba(255, 255, 255, 0.85);
+  --np-toggle-off: rgba(255, 255, 255, 0.20);
+  --np-toggle-dot-on: #000000;
+  --np-toggle-dot-off: #ffffff;
+
+  /* Backdrop */
+  --np-backdrop-blur: blur(24px);
+}
+
+/* ── Dark Solid ──────────────────────────────────────────────────────────── */
+[data-theme="dark-solid"] {
+  color-scheme: dark;
+  --np-bg: #1a1a1a;
+  --np-surface: #242424;
+  --np-surface-alt: #1e1e1e;
+  --np-overlay: #242424;
+  --np-overlay-heavy: #1a1a1a;
+  --np-backdrop-blur: none;
+}
+
+/* ── Light Translucent ───────────────────────────────────────────────────── */
+[data-theme="light-translucent"] {
+  color-scheme: light;
+  --np-bg: rgba(245, 242, 238, 0.75);
+  --np-surface: rgba(250, 248, 245, 0.80);
+  --np-surface-alt: rgba(240, 237, 232, 0.85);
+  --np-overlay: rgba(250, 248, 245, 0.80);
+  --np-overlay-heavy: rgba(245, 242, 238, 0.92);
+
+  --np-text: rgba(0, 0, 0, 0.87);
+  --np-text-secondary: rgba(0, 0, 0, 0.60);
+  --np-text-tertiary: rgba(0, 0, 0, 0.40);
+  --np-text-muted: rgba(0, 0, 0, 0.25);
+
+  --np-hover: rgba(0, 0, 0, 0.06);
+  --np-active: rgba(0, 0, 0, 0.10);
+  --np-selected: rgba(0, 0, 0, 0.12);
+
+  --np-accent: #0078d4;
+  --np-accent-soft: rgba(0, 120, 212, 0.15);
+
+  --np-divider: rgba(0, 0, 0, 0.08);
+
+  --np-scrollbar: rgba(0, 0, 0, 0.10);
+  --np-scrollbar-hover: rgba(0, 0, 0, 0.20);
+
+  --np-control-bg: rgba(0, 0, 0, 0.10);
+  --np-control-fill: rgba(0, 0, 0, 0.70);
+  --np-control-thumb: #1a1a1a;
+  --np-toggle-on: rgba(0, 0, 0, 0.80);
+  --np-toggle-off: rgba(0, 0, 0, 0.15);
+  --np-toggle-dot-on: #ffffff;
+  --np-toggle-dot-off: #1a1a1a;
+
+  --np-backdrop-blur: blur(24px);
+}
+
+/* ── Light Solid ─────────────────────────────────────────────────────────── */
+[data-theme="light-solid"] {
+  color-scheme: light;
+  --np-bg: #f5f2ee;
+  --np-surface: #faf8f5;
+  --np-surface-alt: #f0ede8;
+  --np-overlay: #faf8f5;
+  --np-overlay-heavy: #f5f2ee;
+
+  --np-text: rgba(0, 0, 0, 0.87);
+  --np-text-secondary: rgba(0, 0, 0, 0.60);
+  --np-text-tertiary: rgba(0, 0, 0, 0.40);
+  --np-text-muted: rgba(0, 0, 0, 0.25);
+
+  --np-hover: rgba(0, 0, 0, 0.06);
+  --np-active: rgba(0, 0, 0, 0.10);
+  --np-selected: rgba(0, 0, 0, 0.12);
+
+  --np-accent: #0078d4;
+  --np-accent-soft: rgba(0, 120, 212, 0.15);
+
+  --np-divider: rgba(0, 0, 0, 0.08);
+
+  --np-scrollbar: rgba(0, 0, 0, 0.10);
+  --np-scrollbar-hover: rgba(0, 0, 0, 0.20);
+
+  --np-control-bg: rgba(0, 0, 0, 0.10);
+  --np-control-fill: rgba(0, 0, 0, 0.70);
+  --np-control-thumb: #1a1a1a;
+  --np-toggle-on: rgba(0, 0, 0, 0.80);
+  --np-toggle-off: rgba(0, 0, 0, 0.15);
+  --np-toggle-dot-on: #ffffff;
+  --np-toggle-dot-off: #1a1a1a;
+
+  --np-backdrop-blur: none;
 }
 
 *,
@@ -28,9 +153,7 @@ body,
   user-select: none;
 }
 
-/* ── Custom scrollbar (WebKit / Chromium-based webview) ──────────────────────
-   The Tauri webview uses Chromium so these rules apply everywhere —
-   they replace the chunky native bar with a thin, themed one. */
+/* ── Custom scrollbar (WebKit / Chromium-based webview) ───────────────────── */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -41,7 +164,7 @@ body,
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--np-scrollbar);
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: padding-box;
@@ -49,7 +172,7 @@ body,
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--np-scrollbar-hover);
   background-clip: padding-box;
 }
 
@@ -57,8 +180,8 @@ body,
   background: transparent;
 }
 
-/* Firefox fallback (for completeness — Tauri uses WebKit on macOS / Chromium elsewhere) */
+/* Firefox fallback */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  scrollbar-color: var(--np-scrollbar) transparent;
 }

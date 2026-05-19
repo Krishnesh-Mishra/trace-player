@@ -48,7 +48,7 @@ export default function InterpolationPage({
         ))}
       </div>
 
-      <div className="px-3 py-2 border-t border-white/8 space-y-2.5">
+      <div className="px-3 py-2 border-t border-[var(--np-divider)] space-y-2.5">
         <ToggleRow
           label="VSync"
           description="Match output to display refresh — fewer tears"

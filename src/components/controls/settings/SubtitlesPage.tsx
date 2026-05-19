@@ -36,7 +36,7 @@ export default function SubtitlesPage({
       <div className="px-1 py-1 max-h-56 overflow-y-auto">
         <button
           className="w-full flex items-center justify-between px-3 py-2
-                     text-sm text-white/90 rounded-lg hover:bg-white/10 cursor-pointer
+                     text-sm text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                      transition-colors duration-100"
           onClick={() => {
             onOpenSubtitlePanel();
@@ -44,11 +44,11 @@ export default function SubtitlesPage({
           }}
         >
           <span className="flex items-center gap-2">
-            <Sliders className="w-3.5 h-3.5 text-white/60" />
+            <Sliders className="w-3.5 h-3.5 text-[var(--np-text-secondary)]" />
             Customize Style…
           </span>
         </button>
-        <div className="my-1 border-t border-white/8 mx-2" />
+        <div className="my-1 border-t border-[var(--np-divider)] mx-2" />
 
         <TrackOption
           label="Off"

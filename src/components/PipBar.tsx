@@ -71,7 +71,7 @@ export default function PipBar({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 6 }}
       className="absolute bottom-0 left-0 right-0 z-30 px-2 py-1.5
-                 bg-black/55 backdrop-blur-md border-t border-white/10
+                 bg-black/55 backdrop-blur-md border-t border-[var(--np-divider)]
                  flex items-center gap-2"
       onClick={(e) => e.stopPropagation()}
     >
@@ -79,13 +79,13 @@ export default function PipBar({
         onClick={onPlayPause}
         aria-label="Play / Pause"
         className="w-7 h-7 rounded-full flex items-center justify-center
-                   text-white hover:bg-white/15 transition-colors"
+                   text-[var(--np-text)] hover:bg-[var(--np-active)] transition-colors"
       >
         {isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
       </button>
 
       <div
-        className="flex-1 h-1.5 rounded-full bg-white/20 cursor-pointer relative"
+        className="flex-1 h-1.5 rounded-full bg-[var(--np-selected)] cursor-pointer relative"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -102,7 +102,7 @@ export default function PipBar({
         aria-label="Restore"
         title="Restore"
         className="w-7 h-7 rounded-full flex items-center justify-center
-                   text-white/80 hover:text-white hover:bg-white/15 transition-colors"
+                   text-[var(--np-text)] hover:text-[var(--np-text)] hover:bg-[var(--np-active)] transition-colors"
       >
         <Maximize2 size={13} />
       </button>
@@ -111,7 +111,7 @@ export default function PipBar({
         aria-label="Exit Picture in Picture"
         title="Exit PiP"
         className="w-7 h-7 rounded-full flex items-center justify-center
-                   text-white/60 hover:text-white hover:bg-white/15 transition-colors"
+                   text-[var(--np-text-secondary)] hover:text-[var(--np-text)] hover:bg-[var(--np-active)] transition-colors"
       >
         <X size={14} />
       </button>

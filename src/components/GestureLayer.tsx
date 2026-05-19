@@ -280,10 +280,10 @@ export default function GestureLayer({
             onAnimationComplete={() => setSeekFx(null)}
             className={`absolute top-1/2 ${
               seekFx.side === "left" ? "left-[15%]" : "right-[15%]"
-            } -translate-y-1/2 w-24 h-24 rounded-full bg-white/12 backdrop-blur-sm
+            } -translate-y-1/2 w-24 h-24 rounded-full bg-[var(--np-active)] backdrop-blur-sm
               flex items-center justify-center pointer-events-none `}
           >
-            <span className="text-white text-sm font-medium">
+            <span className="text-[var(--np-text)] text-sm font-medium">
               {seekFx.side === "left" ? "« 10s" : "10s »"}
             </span>
           </motion.div>
@@ -302,16 +302,16 @@ export default function GestureLayer({
                        px-4 py-2.5 rounded-xl bg-black/55 backdrop-blur-md 
                        flex items-center gap-3 min-w-[200px]"
           >
-            <span className="text-[11px] uppercase tracking-wider text-white/60 w-16">
+            <span className="text-[11px] uppercase tracking-wider text-[var(--np-text-secondary)] w-16">
               {overlay.kind}
             </span>
-            <div className="flex-1 h-1.5 rounded-full bg-white/15 relative">
+            <div className="flex-1 h-1.5 rounded-full bg-[var(--np-active)] relative">
               <div
                 className="absolute inset-y-0 left-0 bg-white rounded-full"
                 style={{ width: `${overlay.pct}%` }}
               />
             </div>
-            <span className="text-[11px] tabular-nums text-white/90 w-12 text-right">
+            <span className="text-[11px] tabular-nums text-[var(--np-text)] w-12 text-right">
               {overlay.kind === "volume"
                 ? `${Math.round(overlay.value)}%`
                 : overlay.kind === "brightness"

@@ -23,12 +23,12 @@ function FolderPreview({ paths }: { paths: string[] }) {
     return () => { cancelled = true; };
   }, [paths]);
 
-  if (urls.length === 0) return <FolderOpen className="w-8 h-8 text-white/30 group-hover:text-white/50 transition-colors" />;
+  if (urls.length === 0) return <FolderOpen className="w-8 h-8 text-[var(--np-text-muted)] group-hover:text-[var(--np-text-tertiary)] transition-colors" />;
 
   return (
     <div className="w-full h-full grid grid-cols-2 grid-rows-2 gap-px overflow-hidden rounded-lg">
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="bg-white/5 overflow-hidden">
+        <div key={i} className="bg-[var(--np-hover)] overflow-hidden">
           {urls[i] ? (
             <img src={urls[i]} className="w-full h-full object-cover" />
           ) : (
@@ -84,7 +84,7 @@ export default function LibraryGrid({
           onEmptyContext?.(e);
         }}
       >
-        <p className="text-sm text-white/30">
+        <p className="text-sm text-[var(--np-text-muted)]">
           No items yet. Import files or torrents to get started.
         </p>
       </div>
@@ -117,13 +117,13 @@ export default function LibraryGrid({
                 onFolderContext?.(e, folder);
               }}
             >
-              <div className={`aspect-video rounded-lg overflow-hidden bg-white/[0.04]
-                              hover:bg-white/[0.08] transition-all duration-100
+              <div className={`aspect-video rounded-lg overflow-hidden bg-[var(--np-hover)]
+                              hover:bg-[var(--np-hover)] transition-all duration-100
                               ${hasPreviews ? "" : "flex flex-col items-center justify-center"}`}>
                 {hasPreviews ? (
                   <FolderPreview paths={folderPreviews![folder.id]} />
                 ) : (
-                  <FolderOpen className="w-8 h-8 text-white/30 group-hover:text-white/50 transition-colors" />
+                  <FolderOpen className="w-8 h-8 text-[var(--np-text-muted)] group-hover:text-[var(--np-text-tertiary)] transition-colors" />
                 )}
               </div>
               <div className="mt-1.5 px-0.5">
@@ -138,11 +138,11 @@ export default function LibraryGrid({
                       if (e.key === "Escape") onRenameCancel?.();
                     }}
                     onBlur={(e) => onRenameSubmit?.(e.target.value)}
-                    className="w-full bg-white/10 rounded px-1.5 py-0.5
-                               text-xs text-white outline-none"
+                    className="w-full bg-[var(--np-hover)] rounded px-1.5 py-0.5
+                               text-xs text-[var(--np-text)] outline-none"
                   />
                 ) : (
-                  <p className="text-xs text-white/60 group-hover:text-white/80 truncate">
+                  <p className="text-xs text-[var(--np-text-secondary)] group-hover:text-[var(--np-text)] truncate">
                     {folder.name}
                   </p>
                 )}
@@ -175,7 +175,7 @@ export default function LibraryGrid({
 
       {loading && (
         <div className="flex items-center justify-center py-8">
-          <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+          <div className="w-5 h-5 border-2 border-[var(--np-divider)] border-t-[var(--np-text-secondary)] rounded-full animate-spin" />
         </div>
       )}
     </div>

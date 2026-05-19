@@ -50,7 +50,7 @@ function statusColor(state: string): string {
     case "paused": return "text-yellow-400";
     case "initializing": return "text-blue-400";
     case "error": return "text-red-400";
-    default: return "text-white/50";
+    default: return "text-[var(--np-text-tertiary)]";
   }
 }
 
@@ -74,10 +74,10 @@ export default function DownloadsView() {
   return (
     <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
       <div className="flex items-center gap-3 px-5 pt-4 pb-3">
-        <Download className="w-4 h-4 text-white/50" />
-        <h2 className="text-sm font-medium text-white/90">Downloads</h2>
+        <Download className="w-4 h-4 text-[var(--np-text-tertiary)]" />
+        <h2 className="text-sm font-medium text-[var(--np-text)]">Downloads</h2>
         {downloads.length > 0 && (
-          <span className="text-[10px] text-white/40">
+          <span className="text-[10px] text-[var(--np-text-tertiary)]">
             {downloads.length} active
           </span>
         )}
@@ -86,9 +86,9 @@ export default function DownloadsView() {
       <div className="flex-1 overflow-y-auto px-5 pb-5">
         {downloads.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
-            <Download className="w-10 h-10 text-white/10 mb-3" />
-            <p className="text-sm text-white/30">No active downloads</p>
-            <p className="text-[11px] text-white/20 mt-1">
+            <Download className="w-10 h-10 text-[var(--np-text-muted)] mb-3" />
+            <p className="text-sm text-[var(--np-text-muted)]">No active downloads</p>
+            <p className="text-[11px] text-[var(--np-text-muted)] mt-1">
               Right-click a torrent and select "Download" to start
             </p>
           </div>
@@ -100,44 +100,44 @@ export default function DownloadsView() {
                 : 0;
               const isPaused = dl.state === "paused";
               return (
-                <div key={dl.torrentId} className="bg-white/[0.03] rounded-xl p-4">
+                <div key={dl.torrentId} className="bg-[var(--np-hover)] rounded-xl p-4">
                   <div className="flex items-start gap-3">
                     <div className="flex-1 min-w-0">
-                      <p className="text-[12px] text-white/80 leading-snug line-clamp-2 mb-2">
+                      <p className="text-[12px] text-[var(--np-text)] leading-snug line-clamp-2 mb-2">
                         {dl.name || `Torrent #${dl.torrentId}`}
                       </p>
 
-                      <div className="h-2 bg-white/10 rounded-full overflow-hidden mb-2">
+                      <div className="h-2 bg-[var(--np-hover)] rounded-full overflow-hidden mb-2">
                         <div
-                          className="h-full bg-white/50 rounded-full transition-all duration-500"
+                          className="h-full bg-[var(--np-text-tertiary)] rounded-full transition-all duration-500"
                           style={{ width: `${pct}%` }}
                         />
                       </div>
 
                       <div className="flex items-center gap-4 flex-wrap">
-                        <span className="text-[11px] text-white/60 font-medium">
+                        <span className="text-[11px] text-[var(--np-text-secondary)] font-medium">
                           {pct.toFixed(1)}%
                         </span>
-                        <span className="text-[10px] text-white/40">
+                        <span className="text-[10px] text-[var(--np-text-tertiary)]">
                           {fmtSize(dl.progressBytes)} / {fmtSize(dl.totalBytes)}
                         </span>
                         {!isPaused && dl.downloadSpeedBps > 0 && (
-                          <span className="text-[10px] text-white/40">
+                          <span className="text-[10px] text-[var(--np-text-tertiary)]">
                             ↓ {fmtSpeed(dl.downloadSpeedBps)}
                           </span>
                         )}
                         {!isPaused && dl.uploadSpeedBps > 0 && (
-                          <span className="text-[10px] text-white/40">
+                          <span className="text-[10px] text-[var(--np-text-tertiary)]">
                             ↑ {fmtSpeed(dl.uploadSpeedBps)}
                           </span>
                         )}
                         {dl.peersLive > 0 && (
-                          <span className="text-[10px] text-white/40">
+                          <span className="text-[10px] text-[var(--np-text-tertiary)]">
                             {dl.peersLive} peers
                           </span>
                         )}
                         {!isPaused && dl.etaSeconds != null && dl.etaSeconds > 0 && (
-                          <span className="text-[10px] text-white/40">
+                          <span className="text-[10px] text-[var(--np-text-tertiary)]">
                             ETA {fmtEta(dl.etaSeconds)}
                           </span>
                         )}
@@ -154,7 +154,7 @@ export default function DownloadsView() {
                           invoke(cmd, { id: dl.torrentId }).catch(() => {});
                         }}
                         className="w-7 h-7 flex items-center justify-center rounded-lg
-                                   text-white/40 hover:text-white/80 hover:bg-white/10
+                                   text-[var(--np-text-tertiary)] hover:text-[var(--np-text)] hover:bg-[var(--np-hover)]
                                    cursor-pointer transition-colors"
                         title={isPaused ? "Resume" : "Pause"}
                       >
@@ -169,7 +169,7 @@ export default function DownloadsView() {
                           invoke("stop_download", { id: dl.torrentId }).catch(() => {});
                         }}
                         className="w-7 h-7 flex items-center justify-center rounded-lg
-                                   text-white/40 hover:text-white/80 hover:bg-white/10
+                                   text-[var(--np-text-tertiary)] hover:text-[var(--np-text)] hover:bg-[var(--np-hover)]
                                    cursor-pointer transition-colors"
                         title="Stop"
                       >

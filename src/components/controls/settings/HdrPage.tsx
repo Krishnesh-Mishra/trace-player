@@ -36,10 +36,10 @@ export default function HdrPage({
       <BackHeader label="HDR" onClick={onBack} />
 
       {info && (
-        <div className="px-3 pt-2 pb-1 text-[10px] text-white/60">
-          Now playing: <span className="text-white/85">{info.format}</span>
+        <div className="px-3 pt-2 pb-1 text-[10px] text-[var(--np-text-secondary)]">
+          Now playing: <span className="text-[var(--np-text)]">{info.format}</span>
           {info.primaries && info.format !== "SDR" && (
-            <span className="text-white/40"> · {info.primaries}</span>
+            <span className="text-[var(--np-text-tertiary)]"> · {info.primaries}</span>
           )}
         </div>
       )}
@@ -57,7 +57,7 @@ export default function HdrPage({
       </div>
 
       {pipeline && (
-        <div className="px-3 pb-3 pt-2 border-t border-white/8 space-y-0.5">
+        <div className="px-3 pb-3 pt-2 border-t border-[var(--np-divider)] space-y-0.5">
           <StatRow label="VO" value={pipeline.vo} />
           <StatRow label="GPU API" value={pipeline.gpu_api} />
           <StatRow label="hwdec" value={pipeline.hwdec} />

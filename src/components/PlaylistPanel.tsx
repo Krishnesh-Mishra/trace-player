@@ -90,8 +90,8 @@ export default function PlaylistPanel({
           ref={panelRef}
           key="playlist-panel"
           className="absolute top-0 right-0 bottom-0 z-50
-                     w-[340px] bg-[#0d0d0f]/95 backdrop-blur-xl
-                     border-l border-white/10 shadow-2xl
+                     w-[340px] bg-[var(--np-overlay-heavy)] backdrop-blur-xl
+                     border-l border-[var(--np-divider)] shadow-2xl
                      flex flex-col"
           initial={{ x: "100%", opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
@@ -100,18 +100,18 @@ export default function PlaylistPanel({
           onClick={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
         >
-          <div className="flex items-center justify-between px-4 h-12 border-b border-white/10 shrink-0">
-            <h2 className="text-sm font-medium text-white tracking-wide">
+          <div className="flex items-center justify-between px-4 h-12 border-b border-[var(--np-divider)] shrink-0">
+            <h2 className="text-sm font-medium text-[var(--np-text)] tracking-wide">
               Playlist
               {items.length > 0 && (
-                <span className="ml-2 text-[10px] text-white/40 tabular-nums">
+                <span className="ml-2 text-[10px] text-[var(--np-text-tertiary)] tabular-nums">
                   {items.length}
                 </span>
               )}
             </h2>
             <motion.button
-              className="w-7 h-7 flex items-center justify-center text-white/60
-                         hover:text-white rounded-md hover:bg-white/10 cursor-pointer
+              className="w-7 h-7 flex items-center justify-center text-[var(--np-text-secondary)]
+                         hover:text-[var(--np-text)] rounded-md hover:bg-[var(--np-hover)] cursor-pointer
                          transition-colors duration-100"
               whileHover={{ scale: 1.08 }}
               whileTap={{ scale: 0.9 }}
@@ -122,7 +122,7 @@ export default function PlaylistPanel({
             </motion.button>
           </div>
 
-          <div className="flex items-center gap-1 px-3 py-2 border-b border-white/8 shrink-0">
+          <div className="flex items-center gap-1 px-3 py-2 border-b border-[var(--np-divider)] shrink-0">
             <ToolbarButton onClick={onAdd} icon={<Plus className="w-3.5 h-3.5" />} label="Add" />
             <ToolbarButton onClick={onAddUrl} icon={<Globe className="w-3.5 h-3.5" />} label="URL" />
             <ToolbarButton onClick={onShuffle} icon={<Shuffle className="w-3.5 h-3.5" />} label="Shuffle" />
@@ -144,17 +144,17 @@ export default function PlaylistPanel({
           <div className="flex-1 overflow-y-auto py-2">
             {items.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center px-6">
-                <div className="w-12 h-12 rounded-full bg-white/5  flex items-center justify-center mb-3">
-                  <Play className="w-4 h-4 text-white/40 translate-x-0.5" />
+                <div className="w-12 h-12 rounded-full bg-[var(--np-hover)]  flex items-center justify-center mb-3">
+                  <Play className="w-4 h-4 text-[var(--np-text-tertiary)] translate-x-0.5" />
                 </div>
-                <p className="text-xs text-white/60">Playlist is empty</p>
-                <p className="text-[10px] text-white/35 mt-1 leading-snug">
+                <p className="text-xs text-[var(--np-text-secondary)]">Playlist is empty</p>
+                <p className="text-[10px] text-[var(--np-text-muted)] mt-1 leading-snug">
                   Add files to queue them up. Auto-advance plays them in order.
                 </p>
                 <button
                   onClick={onAdd}
-                  className="mt-4 px-3 py-1.5 text-[11px] bg-white/10 hover:bg-white/15
-                             text-white/85 rounded-md cursor-pointer transition-colors"
+                  className="mt-4 px-3 py-1.5 text-[11px] bg-[var(--np-hover)] hover:bg-[var(--np-active)]
+                             text-[var(--np-text)] rounded-md cursor-pointer transition-colors"
                 >
                   Add Files
                 </button>
@@ -180,13 +180,13 @@ export default function PlaylistPanel({
                     }}
                     className={`group relative flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer
                                 transition-colors duration-100
-                                ${item.current ? "bg-[var(--np-accent-soft)] border border-[var(--np-accent)]/30" : "hover:bg-white/8"}
+                                ${item.current ? "bg-[var(--np-accent-soft)] border border-[var(--np-accent)]/30" : "hover:bg-[var(--np-hover)]"}
                                 ${dropIdx === i && dragIdx !== i ? "ring-1 ring-[var(--np-accent)]" : ""}`}
                     onDoubleClick={() => onPlayIndex(item.index)}
                   >
-                    <GripVertical className="w-3 h-3 text-white/30 shrink-0 cursor-grab" />
+                    <GripVertical className="w-3 h-3 text-[var(--np-text-muted)] shrink-0 cursor-grab" />
                     <button
-                      className="w-5 h-5 flex items-center justify-center shrink-0 text-white/50 hover:text-white"
+                      className="w-5 h-5 flex items-center justify-center shrink-0 text-[var(--np-text-tertiary)] hover:text-[var(--np-text)]"
                       onClick={() => onPlayIndex(item.index)}
                       title="Play"
                     >
@@ -198,7 +198,7 @@ export default function PlaylistPanel({
                     >
                       <p
                         className={`text-[11px] truncate ${
-                          item.current ? "text-white font-medium" : "text-white/85"
+                          item.current ? "text-[var(--np-text)] font-medium" : "text-[var(--np-text)]"
                         }`}
                         title={item.filename}
                       >
@@ -206,7 +206,7 @@ export default function PlaylistPanel({
                       </p>
                     </div>
                     <button
-                      className="w-5 h-5 flex items-center justify-center text-white/30
+                      className="w-5 h-5 flex items-center justify-center text-[var(--np-text-muted)]
                                  hover:text-red-400 opacity-0 group-hover:opacity-100
                                  transition-opacity duration-100 shrink-0"
                       onClick={(e) => {
@@ -250,8 +250,8 @@ function ToolbarButton({
                     active
                       ? "bg-[var(--np-accent-soft)] text-[var(--np-accent)] border border-[var(--np-accent)]/30"
                       : destructive
-                      ? "text-white/55 hover:text-red-300 hover:bg-red-500/10"
-                      : "text-white/70 hover:text-white hover:bg-white/10"
+                      ? "text-[var(--np-text-tertiary)] hover:text-red-300 hover:bg-red-500/10"
+                      : "text-[var(--np-text-secondary)] hover:text-[var(--np-text)] hover:bg-[var(--np-hover)]"
                   }`}
     >
       {icon}

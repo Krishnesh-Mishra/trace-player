@@ -205,7 +205,7 @@ export default function ImportDialog({
             role="dialog"
             aria-modal="true"
             aria-label="Import"
-            className="relative bg-[#111] rounded-2xl shadow-2xl w-[380px] p-5"
+            className="relative bg-[var(--np-overlay)] rounded-2xl shadow-2xl w-[380px] p-5"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.92, y: -8 }}
@@ -213,12 +213,12 @@ export default function ImportDialog({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium text-white/90">Import</h3>
+              <h3 className="text-sm font-medium text-[var(--np-text)]">Import</h3>
               <button
                 onClick={handleClose}
                 aria-label="Close"
-                className="w-6 h-6 flex items-center justify-center text-white/40
-                           hover:text-white rounded-md hover:bg-white/10 cursor-pointer
+                className="w-6 h-6 flex items-center justify-center text-[var(--np-text-tertiary)]
+                           hover:text-[var(--np-text)] rounded-md hover:bg-[var(--np-hover)] cursor-pointer
                            transition-colors duration-100"
               >
                 <X className="w-4 h-4" />
@@ -230,13 +230,13 @@ export default function ImportDialog({
                 <button
                   onClick={() => void handleLocalFile()}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-lg
-                              bg-white/[0.03] hover:bg-white/[0.08]
+                              bg-[var(--np-hover)] hover:bg-[var(--np-hover)]
                              cursor-pointer transition-colors duration-100"
                 >
-                  <FolderOpen className="w-5 h-5 text-white/50" />
+                  <FolderOpen className="w-5 h-5 text-[var(--np-text-tertiary)]" />
                   <div className="text-left">
-                    <p className="text-xs text-white/80">Local Video File</p>
-                    <p className="text-[10px] text-white/40">
+                    <p className="text-xs text-[var(--np-text)]">Local Video File</p>
+                    <p className="text-[10px] text-[var(--np-text-tertiary)]">
                       Browse your computer for video files
                     </p>
                   </div>
@@ -244,13 +244,13 @@ export default function ImportDialog({
                 <button
                   onClick={() => setMode("torrent")}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-lg
-                              bg-white/[0.03] hover:bg-white/[0.08]
+                              bg-[var(--np-hover)] hover:bg-[var(--np-hover)]
                              cursor-pointer transition-colors duration-100"
                 >
-                  <Magnet className="w-5 h-5 text-white/50" />
+                  <Magnet className="w-5 h-5 text-[var(--np-text-tertiary)]" />
                   <div className="text-left">
-                    <p className="text-xs text-white/80">Torrent / Magnet Link</p>
-                    <p className="text-[10px] text-white/40">
+                    <p className="text-xs text-[var(--np-text)]">Torrent / Magnet Link</p>
+                    <p className="text-[10px] text-[var(--np-text-tertiary)]">
                       Add a magnet link to your library
                     </p>
                   </div>
@@ -268,8 +268,8 @@ export default function ImportDialog({
                   }}
                   onKeyDown={(e) => e.key === "Enter" && handleTorrentSubmit()}
                   autoFocus
-                  className={`w-full bg-white/8 rounded-lg px-3 py-2 text-sm text-white
-                             placeholder:text-white/25 outline-none focus:ring-1
+                  className={`w-full bg-[var(--np-hover)] rounded-lg px-3 py-2 text-sm text-[var(--np-text)]
+                             placeholder:text-[var(--np-text-muted)] outline-none focus:ring-1
                              transition-colors duration-100 ${
                                error
                                  ? "ring-1 ring-red-500/60 focus:ring-red-500/40"
@@ -280,19 +280,19 @@ export default function ImportDialog({
                   onClick={() => void handleTorrentFile()}
                   disabled={resolving}
                   className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg
-                             bg-white/[0.03] hover:bg-white/[0.08]
+                             bg-[var(--np-hover)] hover:bg-[var(--np-hover)]
                              cursor-pointer transition-colors duration-100
                              disabled:opacity-40 disabled:cursor-default"
                 >
-                  <FileUp className="w-4 h-4 text-white/50" />
-                  <span className="text-[11px] text-white/60">Open .torrent file</span>
+                  <FileUp className="w-4 h-4 text-[var(--np-text-tertiary)]" />
+                  <span className="text-[11px] text-[var(--np-text-secondary)]">Open .torrent file</span>
                 </button>
                 {error && (
                   <p className="text-[10px] text-red-400">{error}</p>
                 )}
                 <div className="flex gap-2 justify-end items-center">
                   {resolving && (
-                    <span className="text-[10px] text-white/40 mr-auto">
+                    <span className="text-[10px] text-[var(--np-text-tertiary)] mr-auto">
                       {PHASE_LABELS[resolvePhase] || "Resolving..."}
                     </span>
                   )}
@@ -302,8 +302,8 @@ export default function ImportDialog({
                       setError("");
                     }}
                     disabled={resolving}
-                    className="px-3 py-1.5 text-xs text-white/50 hover:text-white/80
-                               rounded-lg hover:bg-white/8 cursor-pointer
+                    className="px-3 py-1.5 text-xs text-[var(--np-text-tertiary)] hover:text-[var(--np-text)]
+                               rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                                transition-colors duration-100 disabled:opacity-40"
                   >
                     Back

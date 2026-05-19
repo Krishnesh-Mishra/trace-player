@@ -80,7 +80,7 @@ export default function NewFolderDialog({ open, onConfirm, onCancel }: Props) {
             role="dialog"
             aria-modal="true"
             aria-label="New folder"
-            className="relative bg-[#141414] rounded-xl shadow-2xl w-[300px] p-4"
+            className="relative bg-[var(--np-surface)] rounded-xl shadow-2xl w-[300px] p-4"
             initial={{ scale: 0.92, y: -8 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.92, y: -8 }}
@@ -88,8 +88,8 @@ export default function NewFolderDialog({ open, onConfirm, onCancel }: Props) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-2 mb-3">
-              <FolderPlus className="w-4 h-4 text-white/50" />
-              <h3 className="text-sm font-medium text-white/90">New Folder</h3>
+              <FolderPlus className="w-4 h-4 text-[var(--np-text-tertiary)]" />
+              <h3 className="text-sm font-medium text-[var(--np-text)]">New Folder</h3>
             </div>
 
             <input
@@ -102,15 +102,15 @@ export default function NewFolderDialog({ open, onConfirm, onCancel }: Props) {
               }}
               placeholder="Folder name"
               autoFocus
-              className="w-full bg-white/8 rounded-lg px-3 py-2 text-xs text-white
-                         placeholder:text-white/25 outline-none mb-3"
+              className="w-full bg-[var(--np-hover)] rounded-lg px-3 py-2 text-xs text-[var(--np-text)]
+                         placeholder:text-[var(--np-text-muted)] outline-none mb-3"
             />
 
             <div className="flex gap-2 justify-end">
               <button
                 onClick={handleClose}
-                className="px-3 py-1.5 text-xs text-white/50 hover:text-white/80
-                           rounded-lg hover:bg-white/8 cursor-pointer
+                className="px-3 py-1.5 text-xs text-[var(--np-text-tertiary)] hover:text-[var(--np-text)]
+                           rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                            transition-colors duration-100"
               >
                 Cancel

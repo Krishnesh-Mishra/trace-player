@@ -17,13 +17,13 @@ const ENTRIES: {
 }[] = [
   {
     page: "video_image",
-    icon: <ImageIcon className="w-3.5 h-3.5 text-white/60 mt-0.5" />,
+    icon: <ImageIcon className="w-3.5 h-3.5 text-[var(--np-text-secondary)] mt-0.5" />,
     label: "Image Adjustments",
     desc: "Brightness, contrast, saturation, gamma, hue",
   },
   {
     page: "video_adjust",
-    icon: <Frame className="w-3.5 h-3.5 text-white/60 mt-0.5" />,
+    icon: <Frame className="w-3.5 h-3.5 text-[var(--np-text-secondary)] mt-0.5" />,
     label: "Aspect, Zoom & Rotate",
     desc: "Frame the picture",
   },
@@ -50,7 +50,7 @@ export default function VideoAppearancePage({
           <button
             key={e.page}
             className="w-full flex items-center justify-between px-3 py-2.5
-                       text-sm text-white/90 rounded-lg hover:bg-white/10 cursor-pointer
+                       text-sm text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                        transition-colors duration-100"
             onClick={() => onNavigate(e.page)}
           >
@@ -58,10 +58,10 @@ export default function VideoAppearancePage({
               {e.icon}
               <span className="flex flex-col items-start">
                 <span>{e.label}</span>
-                <span className="text-[9px] text-white/40 mt-0.5">{e.desc}</span>
+                <span className="text-[9px] text-[var(--np-text-tertiary)] mt-0.5">{e.desc}</span>
               </span>
             </span>
-            <ChevronRight className="w-3.5 h-3.5 text-white/50 shrink-0" />
+            <ChevronRight className="w-3.5 h-3.5 text-[var(--np-text-tertiary)] shrink-0" />
           </button>
         ))}
       </div>
