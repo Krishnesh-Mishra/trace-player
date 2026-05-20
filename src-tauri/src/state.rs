@@ -180,6 +180,7 @@ pub struct AppState {
     pub perf: Arc<PerfController>,
     pub pip: Arc<PipMemory>,
     pub ui: Arc<UiController>,
+    pub cli_file: Mutex<Option<String>>,
     /// Lazy rqbit.exe sidecar — None until the first magnet/torrent open.
     pub streaming: Arc<Mutex<Option<StreamingSession>>>,
     /// All torrent IDs added during this session — drained on shutdown so
@@ -233,6 +234,7 @@ impl AppState {
             perf: Arc::new(PerfController::new()),
             pip: Arc::new(PipMemory::new()),
             ui: Arc::new(UiController::new()),
+            cli_file: Mutex::new(None),
             streaming: Arc::new(Mutex::new(None)),
             torrent_ids: Arc::new(Mutex::new(HashSet::new())),
             active_torrent: Arc::new(Mutex::new(None)),

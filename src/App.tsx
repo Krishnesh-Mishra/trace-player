@@ -183,6 +183,7 @@ export default function App() {
   const [mediaInfoOpen, setMediaInfoOpen] = useState(false);
   const [openSourceOpen, setOpenSourceOpen] = useState(false);
   const [recentPanelOpen, setRecentPanelOpen] = useState(false);
+  const [initialCheckDone, setInitialCheckDone] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryInitialTab, setLibraryInitialTab] = useState<"settings" | null>(null);
   // Buffering visibility is owned by BufferingBanner (it listens to
@@ -672,6 +673,22 @@ export default function App() {
       .catch((e) => log.warn("rehydrate", `get_player_state failed: ${e}`));
   }, []);
 
+  // CLI file check — pull a pending "Open with" file from Rust state.
+  // Until this resolves, the empty-state UI is gated so the user sees
+  // mpv's black background instead of a flash of buttons.
+  useEffect(() => {
+    invoke<string | null>("take_cli_file")
+      .then((path) => {
+        if (path) {
+          log.info("boot", `cli file: ${path}`);
+          setIsLoading(true);
+          loadPathRef.current?.(path);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setInitialCheckDone(true));
+  }, []);
+
   // Drag & drop — load first file, append the rest to the playlist.
   useEffect(() => {
     let active = true;
@@ -1086,6 +1103,26 @@ export default function App() {
     }
   }, []);
 
+  // Sync fullscreen state + force mpv's child to fill the parent on resize.
+  // Tauri's set_fullscreen (and maximize/restore) doesn't reliably propagate
+  // WM_SIZE through to the child window mpv created via --wid, leaving the
+  // video at the pre-resize size while the Tauri window covers the screen.
+  // resize_mpv_to_parent walks the child HWNDs and explicitly resizes mpv's.
+  useEffect(() => {
+    let active = true;
+    const win = getCurrentWindow();
+    const unlisten = win.onResized(() => {
+      invoke("resize_mpv_to_parent").catch(() => {});
+      win.isFullscreen().then((fs) => {
+        if (active) setIsFullscreen(fs);
+      }).catch(() => {});
+    });
+    return () => {
+      active = false;
+      unlisten.then((f) => f());
+    };
+  }, []);
+
   // ── command helpers (callable from keyboard + UI) ───────────────────────────
   const playPause = useCallback(async () => {
     if (!hasFileRef.current) return;
@@ -1355,6 +1392,14 @@ export default function App() {
         ) {
           return;
         }
+      }
+
+      if (isDormantRef.current) {
+        isDormantRef.current = false;
+        invoke("ui_wake").catch(() => {});
+        setShowControls(true);
+        scheduleHide();
+        return;
       }
 
       if (e.key === "b" || e.key === "B") {
@@ -1742,6 +1787,10 @@ export default function App() {
     if (d <= 0 || !hasFileRef.current) return;
     const seconds = (p / 100) * d;
     currentTimeRef.current = seconds;
+    // Set target immediately so the time-pos guard rejects stale OLD-position
+    // events that would otherwise flip progressRef back during the 33ms
+    // before fireDragSeek runs (the seek bar jitter).
+    seekTargetRef.current = seconds;
     dragSeekPendingRef.current = seconds;
     if (dragSeekTimerRef.current !== null) return;
     dragSeekTimerRef.current = setTimeout(fireDragSeek, 33);
@@ -2010,7 +2059,7 @@ export default function App() {
       onMouseLeave={handleMouseLeave}
       style={{ cursor: showControls || !hasFile ? "default" : "none" }}
     >
-      <TitleBar visible={!hasFile || showControls} />
+      <TitleBar hasFile={hasFile} isFullscreen={isFullscreen} />
 
       {/* Pointer-event overlay (touch + mouse). Replaces the simple click-to-play div. */}
       <GestureLayer
@@ -2032,9 +2081,10 @@ export default function App() {
         onDoubleClickFullscreen={toggleFullscreen}
       />
 
-      {/* Empty / no-file state */}
+      {/* Empty / no-file state — gated on initialCheckDone so a CLI
+          "Open with" file doesn't flash the buttons before loading. */}
       <AnimatePresence>
-        {!hasFile && (
+        {!hasFile && initialCheckDone && (
           <motion.div
             key="empty"
             initial={{ opacity: 0 }}

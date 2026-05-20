@@ -84,17 +84,16 @@ mod ui_visibility {
     }
 }
 
-/// Hide the WebView2 overlay via CSS visibility. Previous approach used
-/// Win32 SW_HIDE / ShowWindow which got stuck on some systems — once
-/// hidden, SW_SHOWNOACTIVATE didn't reliably bring it back. CSS
-/// `visibility: hidden` is safe: it hides the React UI from the user,
-/// triggers Page-Visibility throttling on JS rAF, and is always
-/// reversible without OS-level state.
+/// Hide the WebView2 overlay so it stops compositing and frees ~30-40 MB.
+/// SWP_HIDEWINDOW clears WS_VISIBLE which triggers Page-Visibility
+/// throttling in Chromium (rAF drops to ~1 Hz). Mouse events fall
+/// through to mpv's render child, whose MOUSE_MOVE keybind fires the
+/// ui-wake path.
 #[cfg(target_os = "windows")]
 pub(crate) fn hide_webview(hwnd: isize) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_HIDEWINDOW, HWND_TOP,
+        SetWindowPos, HWND_TOP, SWP_HIDEWINDOW, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
     };
     unsafe {
         let h = HWND(hwnd as *mut core::ffi::c_void);
@@ -107,11 +106,16 @@ pub(crate) fn hide_webview(hwnd: isize) {
     }
 }
 
+/// Restore the WebView2 overlay after dormancy. Keeps SWP_NOZORDER so
+/// we don't disturb the WebView↔mpv child Z-order, which matters in
+/// fullscreen — promoting the WebView to top can hide mpv's render
+/// child or break its WM_SIZE subclass handling.
 #[cfg(target_os = "windows")]
 pub(crate) fn show_webview(hwnd: isize) {
-    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Foundation::{BOOL, HWND};
+    use windows::Win32::Graphics::Gdi::InvalidateRect;
     use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, HWND_TOP,
+        SetWindowPos, ShowWindow, HWND_TOP, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_SHOWNA,
     };
     unsafe {
         let h = HWND(hwnd as *mut core::ffi::c_void);
@@ -121,6 +125,8 @@ pub(crate) fn show_webview(hwnd: isize) {
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW,
         );
+        let _ = ShowWindow(h, SW_SHOWNA);
+        let _ = InvalidateRect(h, None, BOOL(1));
     }
 }
 
@@ -404,17 +410,19 @@ pub fn run() {
             }
 
             // First-launch CLI arg ("Open with" → we are the new process).
+            // Stored in managed state so the frontend pulls it on mount via
+            // take_cli_file — no delayed event, no flash of the empty-state UI.
             let argv: Vec<String> = std::env::args().collect();
             let hover_preview = argv.iter().any(|a| a == "--hover" || a == "--hover=true");
             let _ = app
                 .handle()
                 .emit("mpv:hover-preview-enabled", hover_preview);
             if let Some(path) = first_file_arg(&argv) {
-                let app_handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(400));
-                    let _ = app_handle.emit("mpv:cli-file", path);
-                });
+                let _ = app
+                    .state::<state::AppState>()
+                    .cli_file
+                    .lock()
+                    .map(|mut g| *g = Some(path));
             }
 
             // Reveal the main window now that mpv is attached and the React
@@ -487,9 +495,11 @@ pub fn run() {
             commands::get_media_info,
             commands::enter_pip,
             commands::exit_pip,
+            commands::resize_mpv_to_parent,
             commands::force_redraw,
             commands::ui_dormant,
             commands::ui_wake,
+            commands::take_cli_file,
             commands::open_source,
             commands::set_stream_cache,
             commands::open_archive,

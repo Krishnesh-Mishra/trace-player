@@ -2239,6 +2239,14 @@ pub fn ui_dormant(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Return (and consume) a CLI file passed via "Open with". Called once
+/// on frontend mount so there is no delayed event and no flash of the
+/// empty-state UI.
+#[tauri::command]
+pub fn take_cli_file(state: State<'_, AppState>) -> Option<String> {
+    state.cli_file.lock().ok().and_then(|mut g| g.take())
+}
+
 /// Explicit JS-driven wake. Same effect as the events-module path that fires
 /// on mpv input — used for cases where JS wants to come back without waiting
 /// for a mouse move (e.g. `mpv:cli-file` arrival, dialog open via keyboard
@@ -2350,5 +2358,91 @@ pub fn exit_pip(window: tauri::WebviewWindow, state: State<'_, AppState>) -> Res
     window
         .set_position(LogicalPosition::new(g.x as f64, g.y as f64))
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Force mpv's child render window to match the Tauri window's client rect.
+/// Tauri's set_fullscreen and other window-state transitions don't always
+/// propagate WM_SIZE through to the child window mpv created via --wid, so
+/// the video stays at the pre-resize dimensions — visible to the user as
+/// an invisible/black overlay covering the screen while the video stays
+/// small. This is called from the frontend's onResized listener so it
+/// runs after the parent has actually resized.
+#[tauri::command]
+pub fn resize_mpv_to_parent(window: tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use std::ffi::c_void;
+
+        type HWND = *mut c_void;
+        type BOOL = i32;
+        type LPARAM = isize;
+
+        #[repr(C)]
+        struct RECT {
+            left: i32,
+            top: i32,
+            right: i32,
+            bottom: i32,
+        }
+
+        extern "system" {
+            fn GetClientRect(hwnd: HWND, rect: *mut RECT) -> BOOL;
+            fn EnumChildWindows(
+                parent: HWND,
+                cb: extern "system" fn(HWND, LPARAM) -> BOOL,
+                lparam: LPARAM,
+            ) -> BOOL;
+            fn GetClassNameW(hwnd: HWND, buf: *mut u16, max: i32) -> i32;
+            fn MoveWindow(hwnd: HWND, x: i32, y: i32, w: i32, h: i32, repaint: BOOL) -> BOOL;
+            fn SendMessageW(hwnd: HWND, msg: u32, wparam: usize, lparam: isize) -> isize;
+        }
+
+        const WM_SIZE: u32 = 0x0005;
+        const SIZE_RESTORED: usize = 0;
+
+        extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let mut buf = [0u16; 128];
+            let len = unsafe { GetClassNameW(hwnd, buf.as_mut_ptr(), 128) };
+            if len > 0 {
+                let cls = String::from_utf16_lossy(&buf[..len as usize]);
+                // Skip the WebView2 host — Tauri already resizes that.
+                if cls.starts_with("Chrome_WidgetWin_") {
+                    return 1;
+                }
+            }
+            unsafe {
+                let dims = &*(lparam as *const (i32, i32));
+                MoveWindow(hwnd, 0, 0, dims.0, dims.1, 1);
+            }
+            1
+        }
+
+        let hwnd = match window.window_handle() {
+            Ok(h) => match h.as_raw() {
+                RawWindowHandle::Win32(w) => w.hwnd.get() as HWND,
+                _ => return Ok(()),
+            },
+            Err(_) => return Ok(()),
+        };
+
+        let mut rc = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        unsafe {
+            if GetClientRect(hwnd, &mut rc) == 0 {
+                return Ok(());
+            }
+            let dims = (rc.right - rc.left, rc.bottom - rc.top);
+            EnumChildWindows(hwnd, cb, &dims as *const (i32, i32) as LPARAM);
+            // Kick mpv's WndProc subclass — it watches WM_SIZE on the
+            // parent to know when to resize its swapchain.
+            let lparam_size = ((dims.1 as i32 as u32) << 16) | (dims.0 as i32 as u32 & 0xFFFF);
+            SendMessageW(hwnd, WM_SIZE, SIZE_RESTORED, lparam_size as isize);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+    }
     Ok(())
 }
