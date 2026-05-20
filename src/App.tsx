@@ -6,6 +6,7 @@ import { Store } from "@tauri-apps/plugin-store";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, Library } from "lucide-react";
+import TitleBar from "./components/TitleBar";
 import ControlBar, {
   type Track,
   type DynamicAudioState,
@@ -1911,6 +1912,8 @@ export default function App() {
       onMouseLeave={handleMouseLeave}
       style={{ cursor: showControls || !hasFile ? "default" : "none" }}
     >
+      <TitleBar visible={!hasFile || showControls} />
+
       {/* Pointer-event overlay (touch + mouse). Replaces the simple click-to-play div. */}
       <GestureLayer
         enabled={hasFile && !subtitlePanelOpen && !jumpToTimeOpen && !mediaInfoOpen}
