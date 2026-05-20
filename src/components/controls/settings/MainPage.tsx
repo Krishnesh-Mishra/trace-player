@@ -64,7 +64,7 @@ function QuickActionButton({
     <motion.button
       className="relative w-9 h-9 flex items-center justify-center rounded-lg
                  hover:bg-[var(--np-hover)] cursor-pointer transition-colors duration-100"
-      style={{ color: active ? "var(--np-accent)" : "rgba(255,255,255,0.7)" }}
+      style={{ color: active ? "var(--np-accent)" : "var(--np-text-secondary)" }}
       whileHover={{ scale: 1.08 }}
       whileTap={{ scale: 0.9 }}
       onClick={onClick}

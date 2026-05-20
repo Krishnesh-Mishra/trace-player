@@ -486,39 +486,50 @@ pub fn generate_persistent_thumb(
     source_path: &str,
     dest_path: &std::path::Path,
 ) -> Result<(), String> {
+    crate::np_info!("thumb", "gen start: {}", source_path);
     let _g = worker_lock()
         .lock()
-        .map_err(|e| format!("worker lock: {e}"))?;
+        .map_err(|e| { crate::np_err!("thumb", "worker lock: {e}"); format!("worker lock: {e}") })?;
 
-    thumb.load(source_path).map_err(|e| format!("load: {e}"))?;
-    wait_for_load(thumb)?;
+    crate::np_info!("thumb", "loading file in thumbnailer");
+    thumb.load(source_path).map_err(|e| { crate::np_err!("thumb", "load failed: {e}"); format!("load: {e}") })?;
+    wait_for_load(thumb).map_err(|e| { crate::np_err!("thumb", "wait_for_load failed: {e}"); e })?;
 
     let duration = thumb.get_property_f64("duration").unwrap_or(0.0);
     if !duration.is_finite() || duration <= 0.0 {
+        crate::np_err!("thumb", "bad duration: {duration}");
         return Err("no duration".to_string());
     }
 
-    let seek_to = 10.0_f64.min(duration * 0.5);
+    let seek_to = duration * 0.5;
     crate::np_info!("thumb", "seeking to {:.1}s (duration={:.1}s)", seek_to, duration);
     let t_str = format!("{:.3}", seek_to);
     thumb
         .command_silent(&["seek", &t_str, "absolute"])
-        .map_err(|e| format!("seek: {e}"))?;
-    wait_for_seek(thumb, Duration::from_secs(5));
+        .map_err(|e| { crate::np_err!("thumb", "seek failed: {e}"); format!("seek: {e}") })?;
+    wait_for_seek(thumb, Duration::from_secs(10));
 
     let tmp_root = std::env::temp_dir().join("trace-player-thumb-tmp");
     let _ = fs::create_dir_all(&tmp_root);
-    let tmp_file = tmp_root.join(format!("lib-{}.jpg", std::process::id()));
+    let tmp_file = tmp_root.join(format!("lib-{}.png", std::process::id()));
     let tmp_str = tmp_file.to_str().ok_or("bad tmp path")?;
 
+    crate::np_info!("thumb", "taking screenshot to {}", tmp_str);
     thumb
         .screenshot_to_file(tmp_str)
-        .map_err(|e| format!("screenshot: {e}"))?;
+        .map_err(|e| { crate::np_err!("thumb", "screenshot failed: {e}"); format!("screenshot: {e}") })?;
+
+    let file_len = fs::metadata(&tmp_file).map(|m| m.len()).unwrap_or(0);
+    crate::np_info!("thumb", "screenshot file size: {} bytes", file_len);
+    if file_len == 0 {
+        let _ = fs::remove_file(&tmp_file);
+        return Err("screenshot produced empty file".to_string());
+    }
 
     let img = ImageReader::open(&tmp_file)
-        .map_err(|e| format!("open screenshot: {e}"))?
+        .map_err(|e| { crate::np_err!("thumb", "open screenshot: {e}"); format!("open screenshot: {e}") })?
         .decode()
-        .map_err(|e| format!("decode screenshot: {e}"))?;
+        .map_err(|e| { crate::np_err!("thumb", "decode screenshot: {e}"); format!("decode screenshot: {e}") })?;
     let resized = img.resize_exact(LIB_THUMB_W, LIB_THUMB_H, FilterType::Lanczos3);
     let rgb = resized.to_rgb8();
 
@@ -530,6 +541,7 @@ pub fn generate_persistent_thumb(
     fs::write(dest_path, &jpeg_bytes).map_err(|e| format!("write thumb: {e}"))?;
     let _ = fs::remove_file(&tmp_file);
 
+    crate::np_info!("thumb", "saved to {:?}", dest_path);
     Ok(())
 }
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Play, GripVertical, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import Database from "@tauri-apps/plugin-sql";
 import { useLibrary } from "./useLibrary";
 import LibrarySidebar from "./LibrarySidebar";
 import LibraryContent from "./LibraryContent";
@@ -77,12 +78,20 @@ export default function LibraryModal({
   );
 
   const handleDownloadTorrent = useCallback(
-    (item: LibraryItem) => {
-      if (item.magnet_uri) {
-        invoke("start_download", {
+    async (item: LibraryItem) => {
+      if (!item.magnet_uri) return;
+      try {
+        const result = await invoke<{ torrentId: number; fileLength: number }>("start_download", {
           magnet: item.magnet_uri,
           fileIndex: item.file_index ?? null,
-        }).catch(() => {});
+        });
+        const db = await Database.load("sqlite:library.db");
+        await db.execute(
+          "INSERT INTO downloads (torrent_id, magnet_uri, title, file_index, total_bytes) VALUES ($1, $2, $3, $4, $5)",
+          [result.torrentId, item.magnet_uri, item.title, item.file_index ?? null, result.fileLength],
+        );
+      } catch (e) {
+        console.error("start_download:", e);
       }
     },
     [],
@@ -141,6 +150,15 @@ export default function LibraryModal({
         >
           <div className="absolute inset-0 bg-black/80" onClick={onClose} />
 
+          <button
+            onClick={onClose}
+            className="absolute top-[calc(5vh-32px)] right-[calc(5vw-32px)] z-[60] w-8 h-8 flex items-center justify-center
+                       text-white/70 hover:text-white rounded-full
+                       cursor-pointer transition-colors duration-100"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
           <motion.div
             ref={modalRef}
             className="relative w-[90vw] h-[90vh] bg-[var(--np-bg)] rounded-2xl
@@ -152,15 +170,6 @@ export default function LibraryModal({
             onClick={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
           >
-            <button
-              onClick={onClose}
-              className={`absolute top-3 z-10 w-7 h-7 flex items-center justify-center
-                         text-[var(--np-text-muted)] hover:text-[var(--np-text-secondary)] rounded-lg hover:bg-[var(--np-hover)]
-                         cursor-pointer transition-colors duration-100
-                         ${!settingsActive && hasPlaylist ? "right-[282px]" : "right-3"}`}
-            >
-              <X className="w-4 h-4" />
-            </button>
 
             <LibrarySidebar
               activeTab={settingsActive ? "settings" as any : lib.tab}
@@ -188,7 +197,7 @@ export default function LibraryModal({
                 {lib.tab === "explore" ? (
                   <LibraryExploreView onPlayFile={onPlayFile} />
                 ) : lib.tab === "downloads" ? (
-                  <DownloadsView />
+                  <DownloadsView onPlayFile={onPlayFile} onPlayTorrent={onPlayTorrent} />
                 ) : (
                   <LibraryContent
                     tab={lib.tab}

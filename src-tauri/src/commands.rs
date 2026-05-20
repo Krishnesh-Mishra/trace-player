@@ -1472,28 +1472,50 @@ pub fn resume_download(id: u32, state: State<'_, AppState>) -> Result<(), String
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartDownloadResult {
+    pub torrent_id: u32,
+    pub file_length: u64,
+}
+
 #[tauri::command]
 pub async fn start_download(
     magnet: String,
     file_index: Option<u32>,
     state: State<'_, AppState>,
     app: AppHandle,
-) -> Result<u32, String> {
+) -> Result<StartDownloadResult, String> {
     let handle = ensure_streaming(&state, &app)?;
     let added = handle.add_magnet(&magnet)?;
-    if let Some(fi) = file_index {
-        let _ = handle.set_only_files(added.id, &[fi as usize]);
+
+    let mut all_wanted: Vec<usize> = Vec::new();
+    if let Ok(mut map) = state.download_wanted_files.lock() {
+        let entry = map.entry(added.id).or_default();
+        if let Some(fi) = file_index {
+            entry.insert(fi as usize);
+        }
+        all_wanted = entry.iter().copied().collect();
     }
+    if !all_wanted.is_empty() {
+        let _ = handle.set_only_files(added.id, &all_wanted);
+    }
+
     if let Ok(mut ids) = state.torrent_ids.lock() {
         ids.insert(added.id);
     }
-    crate::np_info!("download", "started download torrent_id={}", added.id);
-    Ok(added.id)
+
+    let file_length = file_index
+        .and_then(|fi| added.videos.iter().find(|v| v.idx == fi as usize))
+        .map(|v| v.length)
+        .unwrap_or(0);
+
+    crate::np_info!("download", "started download torrent_id={} file_length={}", added.id, file_length);
+    Ok(StartDownloadResult { torrent_id: added.id, file_length })
 }
 
 #[tauri::command]
-pub fn stop_download(id: u32, state: State<'_, AppState>) -> Result<(), String> {
-    // Extract handle then drop the lock before HTTP I/O.
+pub fn stop_download(id: u32, file_index: Option<u32>, state: State<'_, AppState>) -> Result<(), String> {
     let handle = {
         let guard = state
             .streaming
@@ -1501,13 +1523,62 @@ pub fn stop_download(id: u32, state: State<'_, AppState>) -> Result<(), String> 
             .map_err(|e| format!("lock: {e}"))?;
         guard.as_ref().map(|s| s.handle())
     };
-    if let Ok(mut ids) = state.torrent_ids.lock() {
-        ids.remove(&id);
+
+    let mut remaining: Vec<usize> = Vec::new();
+    if let Ok(mut map) = state.download_wanted_files.lock() {
+        if let Some(fi) = file_index {
+            if let Some(set) = map.get_mut(&id) {
+                set.remove(&(fi as usize));
+                remaining = set.iter().copied().collect();
+            }
+            if remaining.is_empty() {
+                map.remove(&id);
+            }
+        } else {
+            map.remove(&id);
+        }
     }
-    if let Some(h) = handle {
-        let _ = h.forget(id);
+
+    if remaining.is_empty() {
+        if let Ok(mut ids) = state.torrent_ids.lock() {
+            ids.remove(&id);
+        }
+        if let Some(h) = handle {
+            let _ = h.forget(id);
+        }
+    } else if let Some(h) = handle {
+        let _ = h.set_only_files(id, &remaining);
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_torrent_file_path(
+    magnet: String,
+    file_index: Option<u32>,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<Option<String>, String> {
+    let handle = ensure_streaming(&state, &app)?;
+    let added = handle.add_magnet(&magnet)?;
+
+    let session = crate::streaming::session_dir();
+    let torrent_name = added.name;
+
+    if let Some(fi) = file_index {
+        if let Some(video) = added.videos.iter().find(|v| v.idx == fi as usize) {
+            let path = session.join(&torrent_name).join(&video.name);
+            if path.is_file() {
+                return Ok(path.to_str().map(|s| s.to_string()));
+            }
+        }
+    } else {
+        let path = session.join(&torrent_name);
+        if path.is_file() {
+            return Ok(path.to_str().map(|s| s.to_string()));
+        }
+    }
+    Ok(None)
 }
 
 

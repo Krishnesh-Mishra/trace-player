@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -218,6 +218,10 @@ pub struct AppState {
     /// Torrent ID currently being resolved in `resolve_torrent_files`.
     /// Set after `add_magnet` returns so `cancel_torrent_resolve` can forget it.
     pub resolving_torrent_id: Mutex<Option<u32>>,
+    /// Per-torrent set of file indices the user has requested for download.
+    /// Accumulated across multiple `start_download` calls so `set_only_files`
+    /// includes ALL wanted files, not just the latest one.
+    pub download_wanted_files: Mutex<HashMap<u32, HashSet<usize>>>,
 }
 
 impl AppState {
@@ -241,6 +245,7 @@ impl AppState {
             upload_limit_bytes: std::sync::atomic::AtomicU64::new(524288), // 0.5 MiB/s default
             download_limit_bytes: std::sync::atomic::AtomicU64::new(0),
             resolving_torrent_id: Mutex::new(None),
+            download_wanted_files: Mutex::new(HashMap::new()),
         }
     }
 }

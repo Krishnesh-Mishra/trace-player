@@ -5,7 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Store } from "@tauri-apps/plugin-store";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2 } from "lucide-react";
+import { Loader2, Library } from "lucide-react";
 import ControlBar, {
   type Track,
   type DynamicAudioState,
@@ -734,13 +734,7 @@ export default function App() {
     }, 500);
   }, []);
 
-  useEffect(() => {
-    if (!storeLoaded || hasFile) return;
-    const timer = setTimeout(() => {
-      if (!hasFileRef.current) setLibraryOpen(true);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [storeLoaded, hasFile]);
+  // (Library no longer auto-opens on launch — the splash screen is the landing.)
 
   // Save on change (only after the initial load completes — otherwise the
   // first-render defaults would overwrite saved values).
@@ -1945,7 +1939,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0, transition: { duration: 0.15 } }}
-            className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-950"
+            className="absolute inset-0 flex flex-col items-center justify-center bg-[var(--np-bg)]"
           >
             <motion.div
               initial={{ opacity: 0, y: 14 }}
@@ -1957,19 +1951,19 @@ export default function App() {
                 <img
                   src="/logo.png"
                   alt="Trace Player"
-                  className="w-20 h-20 object-contain drop-shadow-[0_0_18px_rgba(255,255,255,0.08)]"
+                  className="w-20 h-20 object-contain"
                   draggable={false}
                 />
               </div>
               <div className="text-center">
-                <p className="text-white text-sm font-medium tracking-wide">Trace Player</p>
-                <p className="text-neutral-500 text-xs mt-1">Open a video file to begin</p>
+                <p className="text-[var(--np-text)] text-sm font-medium tracking-wide">Trace Player</p>
+                <p className="text-[var(--np-text-secondary)] text-xs mt-1">Open a video file to begin</p>
               </div>
               <div className="flex gap-2 items-center">
                 <button
                   onClick={handleOpenFile}
-                  className="px-5 py-2 bg-white text-black text-sm font-medium rounded-lg
-                             hover:bg-neutral-200 active:scale-95 transition-all duration-100"
+                  className="px-5 py-2 bg-[var(--np-text)] text-[var(--np-bg)] text-sm font-medium rounded-lg
+                             hover:opacity-80 active:scale-95 transition-all duration-100"
                 >
                   Open File
                 </button>
@@ -1981,11 +1975,20 @@ export default function App() {
                 >
                   Open URL or Torrent
                 </button>
+                <button
+                  onClick={() => setLibraryOpen(true)}
+                  className="px-4 py-2 bg-[var(--np-hover)] text-[var(--np-text)] text-sm font-medium rounded-lg
+                              hover:bg-[var(--np-active)] active:scale-95
+                             transition-all duration-100 flex items-center gap-1.5"
+                >
+                  <Library className="w-4 h-4" />
+                  Library
+                </button>
               </div>
 
               {recentFiles.length > 0 && (
                 <div className="mt-2 w-64 max-h-48 overflow-y-auto">
-                  <p className="text-neutral-500 text-[10px] uppercase tracking-wider mb-1.5">
+                  <p className="text-[var(--np-text-tertiary)] text-[10px] uppercase tracking-wider mb-1.5">
                     Recent
                   </p>
                   {recentFiles.slice(0, 10).map((p) => {
@@ -2007,7 +2010,7 @@ export default function App() {
                             isUrl ? handleOpenSource(p, false) : loadPath(p)
                           }
                           className="flex-1 min-w-0 text-left px-2 py-1.5 rounded-md text-xs
-                                     text-neutral-400 hover:text-white truncate cursor-pointer"
+                                     text-[var(--np-text-secondary)] hover:text-[var(--np-text)] truncate cursor-pointer"
                           title={p}
                         >
                           {display}
@@ -2018,7 +2021,7 @@ export default function App() {
                             removeFromRecentFiles(p);
                           }}
                           className="w-5 h-5 mr-1 flex items-center justify-center shrink-0
-                                     text-neutral-600 hover:text-red-400
+                                     text-[var(--np-text-muted)] hover:text-red-400
                                      opacity-0 group-hover:opacity-100
                                      transition-opacity duration-100 cursor-pointer"
                           title="Remove from recent"

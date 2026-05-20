@@ -201,7 +201,7 @@ export default function LibraryContent({
 
   return (
     <div className="flex-1 flex flex-col min-w-0">
-      <div className="flex items-center justify-between gap-3 px-4 py-3 bg-black/20">
+      <div className="flex items-center justify-between gap-3 px-4 py-3 bg-[var(--np-surface-alt)]">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--np-text-muted)]" />
           <input
@@ -218,7 +218,7 @@ export default function LibraryContent({
         <button
           onClick={onImport}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium
-                     text-black bg-white rounded-lg hover:bg-white/90
+                     text-[var(--np-bg)] bg-[var(--np-text)] rounded-lg hover:opacity-80
                      active:scale-95 transition-all duration-100 cursor-pointer shrink-0"
         >
           <Plus className="w-3.5 h-3.5" />

@@ -284,6 +284,12 @@ pub fn run() {
                             sql: include_str!("../migrations/002_add_file_index.sql"),
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 3,
+                            description: "create downloads table",
+                            sql: include_str!("../migrations/003_downloads.sql"),
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),
@@ -493,6 +499,7 @@ pub fn run() {
             commands::resume_download,
             commands::start_download,
             commands::stop_download,
+            commands::get_torrent_file_path,
             library::generate_library_thumb,
             library::read_thumb_base64,
             library::get_app_thumb_dir,

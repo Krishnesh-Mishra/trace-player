@@ -23,9 +23,9 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
   const [autoResults, setAutoResults] = useState<ExploreVideo[]>([]);
   const [autoLoading, setAutoLoading] = useState(true);
   const [thumbCache, setThumbCache] = useState<Map<string, string>>(new Map());
-  const thumbQueueRef = useRef<string[]>([]);
-  const thumbActiveRef = useRef(false);
   const mountedRef = useRef(true);
+  const thumbActiveRef = useRef(false);
+  const thumbQueueRef = useRef<string[]>([]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -54,7 +54,9 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
             return next;
           });
         }
-      } catch {}
+      } catch (e) {
+        console.warn("[explore] thumb failed for", path, e);
+      }
     }
     thumbActiveRef.current = false;
   }, []);
@@ -90,7 +92,7 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
 
   return (
     <div className="flex-1 flex flex-col min-w-0">
-      <div className="px-4 py-3 bg-black/20">
+      <div className="px-4 py-3 bg-[var(--np-surface-alt)]">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--np-text-muted)]" />
@@ -107,8 +109,8 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
           </div>
           <button
             onClick={() => void handleSearch()}
-            className="px-4 py-2 text-xs font-medium text-black bg-white rounded-lg
-                       hover:bg-white/90 active:scale-95 transition-all duration-100
+            className="px-4 py-2 text-xs font-medium text-[var(--np-bg)] bg-[var(--np-text)] rounded-lg
+                       hover:opacity-80 active:scale-95 transition-all duration-100
                        cursor-pointer shrink-0"
           >
             Scan
