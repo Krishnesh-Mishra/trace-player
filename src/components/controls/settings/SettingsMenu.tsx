@@ -49,6 +49,7 @@ interface Props {
   onAudioTrackChange: (id: string) => void;
   onSubtitleTrackChange: (id: string) => void;
   onOpenSubtitlePanel: () => void;
+  onLoadSubtitle: () => void;
   monoAudio: boolean;
   dynamicAudio: DynamicAudioState;
   onMonoAudioToggle: () => void;
@@ -256,6 +257,7 @@ export default function SettingsMenu(props: Props) {
                 selectedSubId={props.selectedSubId}
                 onSubtitleTrackChange={props.onSubtitleTrackChange}
                 onOpenSubtitlePanel={props.onOpenSubtitlePanel}
+                onLoadSubtitle={props.onLoadSubtitle}
                 onClose={onClose}
                 onBack={() => goBackTo("main")}
               />

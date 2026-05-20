@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Clock, Globe, FolderOpen, Magnet, X, Trash2 } from "lucide-react";
+import type { WatchHistoryEntry } from "../App";
 
 interface Props {
   open: boolean;
-  recents: string[];
+  recents: WatchHistoryEntry[];
   onPick: (path: string) => void;
   onClear: () => void;
+  onRemove: (path: string) => void;
   onClose: () => void;
 }
 
@@ -44,7 +46,6 @@ function classify(path: string): {
       sub: host,
     };
   }
-  // Local path: pluck the filename for the headline.
   const fname = path.split(/[/\\]/).pop() || path;
   return {
     icon: <FolderOpen className="w-4 h-4 text-[var(--np-text-secondary)] shrink-0" />,
@@ -53,11 +54,21 @@ function classify(path: string): {
   };
 }
 
+function fmtTime(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+    : `${m}:${String(s).padStart(2, "0")}`;
+}
+
 export default function RecentSourcesPanel({
   open,
   recents,
   onPick,
   onClear,
+  onRemove,
   onClose,
 }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -155,28 +166,57 @@ export default function RecentSourcesPanel({
                 Nothing here yet — files and URLs you open will show up.
               </div>
             ) : (
-              recents.map((p) => {
-                const c = classify(p);
+              recents.map((entry) => {
+                const c = classify(entry.path);
+                const hasProgress = entry.position > 10 && entry.duration > 0 && entry.position < entry.duration - 30;
+                const pct = entry.duration > 0 ? Math.min((entry.position / entry.duration) * 100, 100) : 0;
                 return (
-                  <button
-                    key={p}
-                    onClick={() => {
-                      onPick(p);
-                      onClose();
-                    }}
-                    className="w-full flex items-start gap-2.5 px-3 py-2
+                  <div
+                    key={entry.path}
+                    className="group relative flex items-start gap-2.5 px-3 py-2
                                text-left text-sm text-[var(--np-text)] rounded-lg
                                hover:bg-[var(--np-hover)] cursor-pointer
                                transition-colors duration-100"
+                    onClick={() => {
+                      onPick(entry.path);
+                      onClose();
+                    }}
                   >
                     <span className="mt-0.5">{c.icon}</span>
-                    <span className="flex flex-col items-start min-w-0">
+                    <span className="flex flex-col items-start min-w-0 flex-1">
                       <span className="truncate w-full">{c.label}</span>
                       <span className="text-[9px] text-[var(--np-text-tertiary)] truncate w-full">
                         {c.sub}
                       </span>
+                      {hasProgress && (
+                        <span className="flex items-center gap-1.5 mt-0.5 w-full">
+                          <span className="flex-1 h-[2px] rounded-full bg-[var(--np-divider)] overflow-hidden">
+                            <span
+                              className="block h-full rounded-full bg-[var(--np-accent)]"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </span>
+                          <span className="text-[8px] text-[var(--np-text-muted)] shrink-0">
+                            {fmtTime(entry.position)}
+                          </span>
+                        </span>
+                      )}
                     </span>
-                  </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRemove(entry.path);
+                      }}
+                      className="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center shrink-0
+                                 text-[var(--np-text-muted)] hover:text-red-400
+                                 opacity-0 group-hover:opacity-100
+                                 transition-opacity duration-100 cursor-pointer rounded"
+                      title="Remove"
+                      aria-label="Remove"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
                 );
               })
             )}

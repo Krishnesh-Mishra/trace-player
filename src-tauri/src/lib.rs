@@ -290,6 +290,12 @@ pub fn run() {
                             sql: include_str!("../migrations/003_downloads.sql"),
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 4,
+                            description: "create watch history table",
+                            sql: include_str!("../migrations/004_watch_history.sql"),
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),

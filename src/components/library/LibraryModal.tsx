@@ -7,6 +7,7 @@ import { useLibrary } from "./useLibrary";
 import LibrarySidebar from "./LibrarySidebar";
 import LibraryContent from "./LibraryContent";
 import LibraryExploreView from "./LibraryExploreView";
+import HistoryView from "./HistoryView";
 import DownloadsView from "./DownloadsView";
 import ImportDialog from "./ImportDialog";
 import SettingsPanel from "./SettingsPanel";
@@ -196,6 +197,8 @@ export default function LibraryModal({
               <>
                 {lib.tab === "explore" ? (
                   <LibraryExploreView onPlayFile={onPlayFile} />
+                ) : lib.tab === "history" ? (
+                  <HistoryView onPlayFile={onPlayFile} />
                 ) : lib.tab === "downloads" ? (
                   <DownloadsView onPlayFile={onPlayFile} onPlayTorrent={onPlayTorrent} />
                 ) : (

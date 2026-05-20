@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Play, Pause, Gauge, Subtitles, Volume2, Info,
-  ChevronRight, ListPlus,
+  ChevronRight, ListPlus, FileText,
 } from "lucide-react";
 import { type Track, trackLabel } from "./types";
 
@@ -21,6 +21,7 @@ interface Props {
   onSubtitleTrackChange: (id: string) => void;
   onMediaInfo: () => void;
   onAddToPlaylist?: () => void;
+  onLoadSubtitle: () => void;
 }
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
@@ -40,6 +41,7 @@ export default function AppContextMenu({
   onSubtitleTrackChange,
   onMediaInfo,
   onAddToPlaylist,
+  onLoadSubtitle,
 }: Props) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [submenu, setSubmenu] = useState<"speed" | "audio" | "subtitle" | null>(null);
@@ -87,7 +89,7 @@ export default function AppContextMenu({
   // Count visible menu items to estimate height for viewport clamping.
   // Base items when hasFile: play + divider + speed + audio? + subtitle? + divider + addToPlaylist? + properties = ~7-9
   const itemCount = hasFile
-    ? 3 + (audioTracks.length > 0 ? 1 : 0) + (subtitleTracks.length > 0 ? 1 : 0) + 1 + (onAddToPlaylist ? 1 : 0) + 1
+    ? 3 + (audioTracks.length > 0 ? 1 : 0) + 1 + 1 + (onAddToPlaylist ? 1 : 0) + 1
     : 1;
   const menuWidth = 200;
   const menuHeight = itemCount * 36;
@@ -200,52 +202,59 @@ export default function AppContextMenu({
             )}
 
             {/* Subtitle submenu */}
-            {subtitleTracks.length > 0 && (
-              <div
-                className="relative"
-                onMouseEnter={() => setSubmenu("subtitle")}
-                onMouseLeave={() => setSubmenu((s) => s === "subtitle" ? null : s)}
-              >
-                <div className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[11px]
-                                text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)] transition-colors duration-75 cursor-pointer">
-                  <Subtitles className="w-3.5 h-3.5 opacity-70" />
-                  <span className="flex-1">Subtitles</span>
-                  <ChevronRight className="w-3 h-3 text-[var(--np-text-muted)]" />
-                </div>
-                <AnimatePresence>
-                  {submenu === "subtitle" && (
-                    <motion.div
-                      className="absolute left-full top-0 ml-1 min-w-[140px] py-1 bg-[var(--np-surface)]
-                                 rounded-lg shadow-xl max-h-60 overflow-y-auto"
-                      initial={{ opacity: 0, scale: 0.95, x: -4 }}
-                      animate={{ opacity: 1, scale: 1, x: 0 }}
-                      exit={{ opacity: 0, scale: 0.95, x: -4 }}
-                      transition={{ duration: 0.12 }}
-                    >
-                      <button
-                        onClick={() => act(() => onSubtitleTrackChange("no"))}
-                        className={`w-full px-3 py-1.5 text-left text-[11px] cursor-pointer
-                                    transition-colors duration-75
-                                    ${selectedSubId === "no" ? "text-[var(--np-text)] bg-[var(--np-hover)]" : "text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)]"}`}
-                      >
-                        None
-                      </button>
-                      {subtitleTracks.map((t) => (
-                        <button
-                          key={t.id}
-                          onClick={() => act(() => onSubtitleTrackChange(String(t.id)))}
-                          className={`w-full px-3 py-1.5 text-left text-[11px] cursor-pointer
-                                      transition-colors duration-75 truncate
-                                      ${String(t.id) === selectedSubId ? "text-[var(--np-text)] bg-[var(--np-hover)]" : "text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)]"}`}
-                        >
-                          {trackLabel(t)}
-                        </button>
-                      ))}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+            <div
+              className="relative"
+              onMouseEnter={() => setSubmenu("subtitle")}
+              onMouseLeave={() => setSubmenu((s) => s === "subtitle" ? null : s)}
+            >
+              <div className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[11px]
+                              text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)] transition-colors duration-75 cursor-pointer">
+                <Subtitles className="w-3.5 h-3.5 opacity-70" />
+                <span className="flex-1">Subtitles</span>
+                <ChevronRight className="w-3 h-3 text-[var(--np-text-muted)]" />
               </div>
-            )}
+              <AnimatePresence>
+                {submenu === "subtitle" && (
+                  <motion.div
+                    className="absolute left-full top-0 ml-1 min-w-[140px] py-1 bg-[var(--np-surface)]
+                               rounded-lg shadow-xl max-h-60 overflow-y-auto"
+                    initial={{ opacity: 0, scale: 0.95, x: -4 }}
+                    animate={{ opacity: 1, scale: 1, x: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, x: -4 }}
+                    transition={{ duration: 0.12 }}
+                  >
+                    <button
+                      onClick={() => act(() => onSubtitleTrackChange("no"))}
+                      className={`w-full px-3 py-1.5 text-left text-[11px] cursor-pointer
+                                  transition-colors duration-75
+                                  ${selectedSubId === "no" ? "text-[var(--np-text)] bg-[var(--np-hover)]" : "text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)]"}`}
+                    >
+                      None
+                    </button>
+                    {subtitleTracks.map((t) => (
+                      <button
+                        key={t.id}
+                        onClick={() => act(() => onSubtitleTrackChange(String(t.id)))}
+                        className={`w-full px-3 py-1.5 text-left text-[11px] cursor-pointer
+                                    transition-colors duration-75 truncate
+                                    ${String(t.id) === selectedSubId ? "text-[var(--np-text)] bg-[var(--np-hover)]" : "text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)]"}`}
+                      >
+                        {trackLabel(t)}
+                      </button>
+                    ))}
+                    <div className="h-px bg-[var(--np-divider)] my-1 mx-2" />
+                    <button
+                      onClick={() => act(onLoadSubtitle)}
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[11px]
+                                 text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)] transition-colors duration-75 cursor-pointer"
+                    >
+                      <FileText className="w-3.5 h-3.5 opacity-70" />
+                      Load file…
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
             <div className="h-px bg-[var(--np-divider)] my-1 mx-2" />
 

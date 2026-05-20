@@ -48,9 +48,25 @@ import LibraryModal from "./components/library/LibraryModal";
 import GestureLayer from "./components/GestureLayer";
 import PipBar from "./components/PipBar";
 import AppContextMenu from "./components/AppContextMenu";
+import Database from "@tauri-apps/plugin-sql";
 
 /** Lightweight error logger for .catch() handlers on user-facing operations. */
 const logErr = (ctx: string) => (e: unknown) => console.warn(`[TracePlayer] ${ctx}:`, e);
+
+export interface WatchHistoryEntry {
+  id: number;
+  path: string;
+  position: number;
+  duration: number;
+  subtitle_path: string | null;
+  played_at: number;
+}
+
+let _dbPromise: ReturnType<typeof Database.load> | null = null;
+function getDb() {
+  if (!_dbPromise) _dbPromise = Database.load("sqlite:library.db");
+  return _dbPromise;
+}
 
 type TrackList = { audio: Track[]; subtitle: Track[] };
 
@@ -162,7 +178,7 @@ export default function App() {
   const [deinterlace, setDeinterlace] = useState(false);
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [audioDevice, setAudioDevice] = useState("auto");
-  const [recentFiles, setRecentFiles] = useState<string[]>([]);
+  const [watchHistory, setWatchHistory] = useState<WatchHistoryEntry[]>([]);
   const [jumpToTimeOpen, setJumpToTimeOpen] = useState(false);
   const [mediaInfoOpen, setMediaInfoOpen] = useState(false);
   const [openSourceOpen, setOpenSourceOpen] = useState(false);
@@ -212,6 +228,8 @@ export default function App() {
   // Same trick for the per-file re-apply: the file-loaded listener captures
   // it once at mount but it depends on every "current settings" piece.
   const reapplyForCurrentFileRef = useRef<(() => void) | null>(null);
+  const currentFilePathRef = useRef("");
+  const lastPositionSaveRef = useRef(0);
 
   const currentTimeRef = useRef(0);
   const abLoopARef = useRef<number | null>(null);
@@ -269,6 +287,15 @@ export default function App() {
         displayTimeCounter.current++;
         if (displayTimeCounter.current % 10 === 0) {
           setDisplayTime(t);
+        }
+        // Persist resume position every 30s
+        const now = Date.now();
+        if (now - lastPositionSaveRef.current > 30_000 && currentFilePathRef.current) {
+          lastPositionSaveRef.current = now;
+          getDb().then(db => db.execute(
+            "UPDATE watch_history SET position = $1, duration = $2 WHERE path = $3",
+            [t, durationRef.current, currentFilePathRef.current]
+          )).catch(() => {});
         }
       })
     );
@@ -360,7 +387,15 @@ export default function App() {
         const { reason, error, is_error } = e.payload;
         log.info("events", `mpv:eof reason=${reason} error=${error}`);
         setIsPlaying(false);
-        if (!is_error) return;
+        if (!is_error) {
+          const p = currentFilePathRef.current;
+          if (p) {
+            getDb().then(db => db.execute(
+              "UPDATE watch_history SET position = 0 WHERE path = $1", [p]
+            )).catch(() => {});
+          }
+          return;
+        }
 
         clearLoadingState();
         setBufferingForCache(false);
@@ -487,11 +522,16 @@ export default function App() {
     unlisteners.push(
       listen<string>("mpv:file-loaded", (e) => {
         log.info("events", `mpv:file-loaded path=${e.payload}`);
-        // mpv has accepted the URL. For local files this is also the
-        // moment first-frame is imminent so the splash COULD drop here,
-        // but for network sources (torrents in particular) demux often
-        // takes 10-30 s more for pieces to land. The mpv:duration > 0
-        // listener does the actual splash-clear once playback is real.
+        // Save previous file's resume position before switching
+        const prevPath = currentFilePathRef.current;
+        const prevTime = currentTimeRef.current;
+        const prevDur = durationRef.current;
+        if (prevPath && prevTime > 5) {
+          getDb().then(db => db.execute(
+            "UPDATE watch_history SET position = $1, duration = $2 WHERE path = $3",
+            [prevTime, prevDur, prevPath]
+          )).catch(() => {});
+        }
         setHasFile(true);
         progressRef.current = 0;
         currentTimeRef.current = 0;
@@ -525,10 +565,28 @@ export default function App() {
         // streaming over the network — local thumbnails on a torrent
         // stream would just hammer rqbit's range endpoints.
         const path = e.payload;
+        currentFilePathRef.current = path;
         const isNetwork = isNetworkPath(path);
         // mpv's cache resets to the init defaults on every loadfile, so
         // streaming sources need their bigger window re-applied per file.
         invoke("set_stream_cache", { enabled: isNetwork }).catch(() => {});
+        // Resume position + auto-load saved subtitle from watch history
+        getDb().then(db => db.select<WatchHistoryEntry[]>(
+          "SELECT position, duration, subtitle_path FROM watch_history WHERE path = $1", [path]
+        )).then(rows => {
+          const entry = rows[0];
+          if (!entry) return;
+          if (entry.position > 10 && entry.duration > 0 && entry.position < entry.duration - 30) {
+            invoke("seek", { seconds: entry.position, mode: "absolute" }).catch(() => {});
+          }
+          if (entry.subtitle_path) {
+            invoke("load_subtitle", { path: entry.subtitle_path }).catch(() => {
+              getDb().then(db => db.execute(
+                "UPDATE watch_history SET subtitle_path = NULL WHERE path = $1", [path]
+              )).catch(() => {});
+            });
+          }
+        }).catch(() => {});
         // Hover-preview thumbnails: local disk files only. Network sources
         // (http/https CDN, rqbit's 127.0.0.1 stream) skip thumbnailing —
         // range-spamming a torrent sidecar tanks playback and CDN URLs
@@ -703,8 +761,29 @@ export default function App() {
           setAudioDevice(savedAudioDevice);
           invoke("set_audio_device", { name: savedAudioDevice }).catch(() => {});
         }
-        const savedRecent = await s.get<string[]>("recentFiles");
-        if (savedRecent && !cancelled) setRecentFiles(savedRecent);
+        // Migrate legacy recentFiles from store → watch_history SQL table
+        const legacyRecent = await s.get<string[]>("recentFiles");
+        if (legacyRecent && legacyRecent.length > 0) {
+          const db = await getDb();
+          for (const p of legacyRecent) {
+            await db.execute(
+              `INSERT INTO watch_history (path, played_at) VALUES ($1, strftime('%s','now'))
+               ON CONFLICT(path) DO NOTHING`,
+              [p]
+            ).catch(() => {});
+          }
+          await s.delete("recentFiles");
+          await s.delete("subtitleMap");
+          saveStore();
+        }
+        // Load watch history from SQL
+        if (!cancelled) {
+          const db = await getDb();
+          const rows = await db.select<WatchHistoryEntry[]>(
+            "SELECT * FROM watch_history ORDER BY played_at DESC LIMIT 100"
+          );
+          setWatchHistory(rows);
+        }
         const savedPip = await s.get<boolean>("pipMode");
         if (savedPip && !cancelled) {
           setPipMode(true);
@@ -1144,32 +1223,50 @@ export default function App() {
     invoke("set_audio_device", { name }).catch(() => {});
   }, []);
 
-  const addToRecentFiles = useCallback((path: string) => {
-    setRecentFiles((prev) => {
-      const next = [path, ...prev.filter((p) => p !== path)].slice(0, 15);
-      storeRef.current?.set("recentFiles", next).then(() => saveStore()).catch(() => {});
-      return next;
-    });
+  const upsertWatchHistory = useCallback(async (path: string) => {
+    try {
+      const db = await getDb();
+      await db.execute(
+        `INSERT INTO watch_history (path, played_at) VALUES ($1, strftime('%s','now'))
+         ON CONFLICT(path) DO UPDATE SET played_at = strftime('%s','now')`,
+        [path]
+      );
+      const rows = await db.select<WatchHistoryEntry[]>(
+        "SELECT * FROM watch_history ORDER BY played_at DESC LIMIT 100"
+      );
+      setWatchHistory(rows);
+      await db.execute(
+        "DELETE FROM watch_history WHERE id NOT IN (SELECT id FROM watch_history ORDER BY played_at DESC LIMIT 100)"
+      );
+    } catch {}
   }, []);
 
-  const removeFromRecentFiles = useCallback((path: string) => {
-    setRecentFiles((prev) => {
-      const next = prev.filter((p) => p !== path);
-      storeRef.current?.set("recentFiles", next).then(() => saveStore()).catch(() => {});
-      return next;
-    });
+  const removeFromWatchHistory = useCallback(async (path: string) => {
+    try {
+      const db = await getDb();
+      await db.execute("DELETE FROM watch_history WHERE path = $1", [path]);
+      setWatchHistory((prev) => prev.filter((e) => e.path !== path));
+    } catch {}
   }, []);
 
   const handleLoadSubtitle = useCallback(async () => {
     try {
-      const path = await open({
+      const subPath = await open({
         multiple: false,
         filters: [
           { name: "Subtitle", extensions: ["srt", "ass", "vtt", "sub", "ssa", "smi"] },
         ],
       });
-      if (typeof path === "string") {
-        await invoke("load_subtitle", { path });
+      if (typeof subPath === "string") {
+        await invoke("load_subtitle", { path: subPath });
+        const videoPath = currentFilePathRef.current;
+        if (videoPath) {
+          const db = await getDb();
+          await db.execute(
+            "UPDATE watch_history SET subtitle_path = $1 WHERE path = $2",
+            [subPath, videoPath]
+          );
+        }
       }
     } catch (e) {
       setError(String(e));
@@ -1423,6 +1520,7 @@ export default function App() {
   // the user picked a file or a playlist auto-advanced into one.
   const loadPath = async (path: string) => {
     log.info("load", `loadPath ${path}`);
+    currentFilePathRef.current = path;
     if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
     setIsLoading(true);
     // Archives must route through open_archive — handing a .zip/.7z/.rar
@@ -1451,7 +1549,7 @@ export default function App() {
       // from the backend so we don't set it optimistically here.
       setHasFile(true);
       setError(null);
-      addToRecentFiles(path);
+      upsertWatchHistory(path);
 
       // Auto-populate playlist with sibling video files from the same folder.
       if (!isArchive && !isNetworkPath(path)) {
@@ -1551,7 +1649,7 @@ export default function App() {
           await invoke("open_archive", { url: selected, append: false });
           setHasFile(true);
           setError(null);
-          addToRecentFiles(selected);
+          upsertWatchHistory(selected);
         } catch (e) {
           setError(String(e));
         }
@@ -1599,7 +1697,7 @@ export default function App() {
         if (!append || wasEmpty) {
           setHasFile(true);
           setError(null);
-          addToRecentFiles(url);
+          upsertWatchHistory(url);
         }
       } catch (e) {
         clearLoadingState();
@@ -1989,12 +2087,13 @@ export default function App() {
                 </button>
               </div>
 
-              {recentFiles.length > 0 && (
+              {watchHistory.length > 0 && (
                 <div className="mt-2 w-64 max-h-48 overflow-y-auto">
                   <p className="text-[var(--np-text-tertiary)] text-[10px] uppercase tracking-wider mb-1.5">
                     Recent
                   </p>
-                  {recentFiles.slice(0, 10).map((p) => {
+                  {watchHistory.slice(0, 10).map((entry) => {
+                    const p = entry.path;
                     const isUrl =
                       p.startsWith("http://") ||
                       p.startsWith("https://") ||
@@ -2021,7 +2120,7 @@ export default function App() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            removeFromRecentFiles(p);
+                            removeFromWatchHistory(p);
                           }}
                           className="w-5 h-5 mr-1 flex items-center justify-center shrink-0
                                      text-[var(--np-text-muted)] hover:text-red-400
@@ -2216,6 +2315,7 @@ export default function App() {
             onAudioTrackChange={handleAudioTrackChange}
             onSubtitleTrackChange={handleSubtitleTrackChange}
             onOpenSubtitlePanel={handleOpenSubtitlePanel}
+            onLoadSubtitle={handleLoadSubtitle}
             onMonoAudioToggle={handleMonoAudioToggle}
             onDynamicAudioChange={handleDynamicAudioChange}
             onSkipBack={handleSkipBack}
@@ -2254,7 +2354,7 @@ export default function App() {
 
       <RecentSourcesPanel
         open={recentPanelOpen}
-        recents={recentFiles}
+        recents={watchHistory}
         onPick={(p) => {
           const lower = p.toLowerCase();
           if (
@@ -2272,12 +2372,11 @@ export default function App() {
           }
         }}
         onClear={async () => {
-          setRecentFiles([]);
-          if (storeRef.current) {
-            await storeRef.current.set("recentFiles", []);
-            saveStore();
-          }
+          const db = await getDb();
+          await db.execute("DELETE FROM watch_history");
+          setWatchHistory([]);
         }}
+        onRemove={removeFromWatchHistory}
         onClose={() => setRecentPanelOpen(false)}
       />
 
@@ -2365,6 +2464,7 @@ export default function App() {
         onSubtitleTrackChange={handleSubtitleTrackChange}
         onMediaInfo={() => setMediaInfoOpen(true)}
         onAddToPlaylist={hasFile ? handleAddPlaylistFiles : undefined}
+        onLoadSubtitle={handleLoadSubtitle}
       />
 
       {/* Dev-only: command tester (only mounted in `npm run dev`) */}

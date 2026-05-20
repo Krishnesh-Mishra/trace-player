@@ -28,6 +28,7 @@ const TABS: { key: LibraryTab; label: string; icon: typeof Magnet }[] = [
   { key: "local", label: "Local", icon: HardDrive },
   { key: "explore", label: "Explore", icon: Search },
   { key: "downloads", label: "Downloads", icon: Download },
+  { key: "history", label: "History", icon: Clock },
 ];
 
 export default function LibrarySidebar({

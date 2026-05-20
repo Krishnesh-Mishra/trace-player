@@ -129,6 +129,7 @@ interface ControlBarProps {
   onAudioTrackChange: (id: string) => void;
   onSubtitleTrackChange: (id: string) => void;
   onOpenSubtitlePanel: () => void;
+  onLoadSubtitle: () => void;
   onMonoAudioToggle: () => void;
   onDynamicAudioChange: (state: DynamicAudioState) => void;
   onSkipBack: () => void;
@@ -210,6 +211,7 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
     onAudioTrackChange,
     onSubtitleTrackChange,
     onOpenSubtitlePanel,
+    onLoadSubtitle,
     onMonoAudioToggle,
     onDynamicAudioChange,
     onSkipBack,
@@ -448,6 +450,7 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
           onAudioTrackChange={onAudioTrackChange}
           onSubtitleTrackChange={onSubtitleTrackChange}
           onOpenSubtitlePanel={onOpenSubtitlePanel}
+          onLoadSubtitle={onLoadSubtitle}
           monoAudio={monoAudio}
           dynamicAudio={dynamicAudio}
           onMonoAudioToggle={onMonoAudioToggle}
@@ -499,7 +502,7 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
   ), [volume, isMuted, isFullscreen, settingsOpen, onMuteToggle, onVolumeChange,
       onLibraryOpen, onFullscreenToggle, playbackSpeed, onSpeedChange,
       audioTracks, subtitleTracks, selectedAudioId, selectedSubId,
-      onAudioTrackChange, onSubtitleTrackChange, onOpenSubtitlePanel,
+      onAudioTrackChange, onSubtitleTrackChange, onOpenSubtitlePanel, onLoadSubtitle,
       monoAudio, dynamicAudio, onMonoAudioToggle, onDynamicAudioChange,
       imageParams, videoState, onImageParamsChange, onVideoStateChange,
       hdrMode, hdrInfo, onHdrModeChange, upscaling, onUpscalingChange,

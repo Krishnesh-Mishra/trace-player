@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Sliders } from "lucide-react";
+import { Sliders, FileText } from "lucide-react";
 import { type Track, trackLabel } from "../../types";
 import { BackHeader, TrackOption, pageVariants, pageTransition } from "./shared";
 
@@ -9,6 +9,7 @@ interface Props {
   selectedSubId: string;
   onSubtitleTrackChange: (id: string) => void;
   onOpenSubtitlePanel: () => void;
+  onLoadSubtitle: () => void;
   onClose: () => void;
   onBack: () => void;
 }
@@ -19,6 +20,7 @@ export default function SubtitlesPage({
   selectedSubId,
   onSubtitleTrackChange,
   onOpenSubtitlePanel,
+  onLoadSubtitle,
   onClose,
   onBack,
 }: Props) {
@@ -46,6 +48,20 @@ export default function SubtitlesPage({
           <span className="flex items-center gap-2">
             <Sliders className="w-3.5 h-3.5 text-[var(--np-text-secondary)]" />
             Customize Style…
+          </span>
+        </button>
+        <button
+          className="w-full flex items-center justify-between px-3 py-2
+                     text-sm text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
+                     transition-colors duration-100"
+          onClick={() => {
+            onLoadSubtitle();
+            onClose();
+          }}
+        >
+          <span className="flex items-center gap-2">
+            <FileText className="w-3.5 h-3.5 text-[var(--np-text-secondary)]" />
+            Load subtitle file…
           </span>
         </button>
         <div className="my-1 border-t border-[var(--np-divider)] mx-2" />
