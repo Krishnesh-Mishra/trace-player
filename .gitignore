@@ -26,6 +26,7 @@ dist-ssr
 
 # Rust / Tauri build artifacts
 src-tauri/target/
+src-tauri/shell-extension/target/
 src-tauri/Cargo.lock.bak
 
 .claude/

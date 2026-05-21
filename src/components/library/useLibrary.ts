@@ -164,18 +164,139 @@ export function useLibrary(open: boolean) {
     (async () => {
       try {
         const db = await getDb();
-        const rows = await db.select<{ id: number; path: string }[]>(
+
+        // Pass 0: evict stale thumb_path entries left over from earlier
+        // (broken) cache writes — these point to 3 KB files that render as
+        // empty placeholders in the UI. Nulling them out lets pass 1/2
+        // regenerate via the current code path.
+        try {
+          const allThumbs = await db.select<{ id: number; thumb_path: string }[]>(
+            "SELECT id, thumb_path FROM items WHERE thumb_path IS NOT NULL",
+          );
+          for (const row of allThumbs) {
+            if (cancelled) break;
+            try {
+              const ok = await invoke<boolean>("is_thumb_valid", { path: row.thumb_path });
+              if (!ok) {
+                await db.execute("UPDATE items SET thumb_path = NULL WHERE id = $1", [row.id]);
+              }
+            } catch {
+              await db.execute("UPDATE items SET thumb_path = NULL WHERE id = $1", [row.id]);
+            }
+          }
+          if (allThumbs.length > 0 && !cancelled) void fetchContents();
+        } catch (e) {
+          console.warn("[library] stale-thumb cleanup failed:", e);
+        }
+
+        // Pass 1: local files — anything with a real path and no cached thumb.
+        const localRows = await db.select<{ id: number; path: string }[]>(
           "SELECT id, path FROM items WHERE thumb_path IS NULL AND path IS NOT NULL",
         );
-        for (const row of rows) {
+        let processedSinceRefresh = 0;
+        for (const row of localRows) {
           if (cancelled) break;
           try {
             const thumbPath = await invoke<string>("generate_library_thumb", { path: row.path });
             await db.execute("UPDATE items SET thumb_path = $1 WHERE id = $2", [thumbPath, row.id]);
-          } catch {}
+            processedSinceRefresh += 1;
+            // Repaint every few items so users see thumbs land progressively
+            // instead of waiting for the entire batch.
+            if (processedSinceRefresh >= 3) {
+              processedSinceRefresh = 0;
+              if (!cancelled) void fetchContents();
+            }
+          } catch (e) {
+            console.warn("[library] local thumb failed:", row.path, e);
+          }
         }
+
+        // Pass 2: torrent items — disk-first via rqbit session dir, then
+        // stream-fallback via rqbit HTTP if the file isn't on disk yet.
+        const torrentRows = await db.select<{
+          id: number;
+          title: string;
+          magnet_uri: string;
+          file_index: number | null;
+          folder_id: number | null;
+        }[]>(
+          "SELECT id, title, magnet_uri, file_index, folder_id FROM items WHERE thumb_path IS NULL AND magnet_uri IS NOT NULL",
+        );
+        const folderNameCache = new Map<number, string | null>();
+        for (const row of torrentRows) {
+          if (cancelled) break;
+
+          let folderName: string | null = null;
+          if (row.folder_id !== null) {
+            if (folderNameCache.has(row.folder_id)) {
+              folderName = folderNameCache.get(row.folder_id) ?? null;
+            } else {
+              try {
+                const fr = await db.select<{ name: string }[]>(
+                  "SELECT name FROM folders WHERE id = $1",
+                  [row.folder_id],
+                );
+                folderName = fr[0]?.name ?? null;
+              } catch {
+                folderName = null;
+              }
+              folderNameCache.set(row.folder_id, folderName);
+            }
+          }
+
+          // Disk-first: cheap, no rqbit involvement.
+          let localPath: string | null = null;
+          try {
+            localPath = await invoke<string | null>("find_torrent_local_path", {
+              title: row.title,
+              folderName,
+            });
+          } catch (e) {
+            console.warn("[library] find_torrent_local_path failed:", row.title, e);
+          }
+
+          if (localPath) {
+            try {
+              const thumbPath = await invoke<string>("generate_library_thumb", { path: localPath });
+              await db.execute(
+                "UPDATE items SET thumb_path = $1, path = $2 WHERE id = $3",
+                [thumbPath, localPath, row.id],
+              );
+              processedSinceRefresh += 1;
+              if (processedSinceRefresh >= 3) {
+                processedSinceRefresh = 0;
+                if (!cancelled) void fetchContents();
+              }
+              continue;
+            } catch (e) {
+              console.warn("[library] torrent local thumb failed:", row.title, e);
+            }
+          }
+
+          // Stream fallback: only meaningful when we know which file in the
+          // torrent to thumb. Skips multi-file torrents whose items were
+          // saved without a file_index (older imports).
+          if (row.file_index === null) continue;
+          try {
+            const thumbPath = await invoke<string>("generate_torrent_stream_thumb", {
+              magnet: row.magnet_uri,
+              fileIndex: row.file_index,
+            });
+            await db.execute("UPDATE items SET thumb_path = $1 WHERE id = $2", [thumbPath, row.id]);
+            processedSinceRefresh += 1;
+            if (processedSinceRefresh >= 1) {
+              processedSinceRefresh = 0;
+              if (!cancelled) void fetchContents();
+            }
+          } catch (e) {
+            console.warn("[library] torrent stream thumb failed:", row.title, e);
+          }
+        }
+
         if (!cancelled) void fetchContents();
-      } catch {}
+      } catch (e) {
+        console.warn("[library] thumb auto-gen loop error:", e);
+      }
     })();
     return () => { cancelled = true; };
   }, [open, fetchContents]);

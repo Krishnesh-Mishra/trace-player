@@ -8,5 +8,12 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
+    // CLI mode: when invoked as `trace-player.exe --thumbnail-gen <video>`,
+    // run the headless thumb-extraction path and exit before Tauri spins up.
+    // The Windows Shell extension DLL spawns us with this flag on Explorer
+    // thumbnail-cache misses.
+    if let Some(code) = media_player_lib::handle_cli() {
+        std::process::exit(code);
+    }
     media_player_lib::run()
 }

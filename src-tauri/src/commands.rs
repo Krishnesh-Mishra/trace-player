@@ -1615,7 +1615,7 @@ static STATS_POLLER_ALIVE: std::sync::atomic::AtomicBool =
 /// perform HTTP requests without holding the streaming mutex. The lock is
 /// held only long enough to spawn the sidecar (if needed) and clone the
 /// handle — all subsequent network I/O runs lock-free (Fix B27).
-fn ensure_streaming(
+pub(crate) fn ensure_streaming(
     state: &State<'_, AppState>,
     app: &AppHandle,
 ) -> Result<streaming::SessionHandle, String> {

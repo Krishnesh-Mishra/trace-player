@@ -17,6 +17,7 @@ mod ffi {
     pub const MPV_EVENT_NONE: c_int = 0;
     pub const MPV_EVENT_SHUTDOWN: c_int = 1;
     pub const MPV_EVENT_LOG_MESSAGE: c_int = 2;
+    pub const MPV_EVENT_START_FILE: c_int = 6;
     pub const MPV_EVENT_END_FILE: c_int = 7;
     pub const MPV_EVENT_FILE_LOADED: c_int = 8;
     pub const MPV_EVENT_CLIENT_MESSAGE: c_int = 16;
@@ -153,9 +154,19 @@ impl Drop for Player {
 /// Owned, copied-out form of mpv_event. The raw mpv_event* lifetime ends at the
 /// next wait_event call, so callers receive an owned snapshot instead.
 pub enum MpvEvent {
+    /// MPV_EVENT_NONE — the queue was empty when `wait_event(0)` returned.
+    /// Distinct from `Other` so callers can drain reliably (otherwise an
+    /// unrecognized event type and an empty queue look identical).
+    None,
     PropertyChange {
         tag: u64,
     },
+    /// MPV_EVENT_START_FILE — mpv has accepted a `loadfile` command and is
+    /// beginning to process it. Used by the thumbnailer as the boundary
+    /// between "events from the previous file" and "events from this load",
+    /// so a stale EndFile from an unload isn't mistaken for the new file
+    /// failing to load.
+    StartFile,
     FileLoaded,
     /// `reason` is one of MPV_END_FILE_REASON_*; `error` is the mpv error
     /// code (negative) when reason==ERROR, otherwise 0.
@@ -349,6 +360,17 @@ impl Player {
             // slower seek; tile extraction still completes in seconds.
             set_opt(handle, "hr-seek", "yes")?;
             set_opt(handle, "hr-seek-framedrop", "yes")?;
+            // Start paused. With vo=null, mpv otherwise won't decode video
+            // frames on demand — playback races past in milliseconds and
+            // screenshot captures an empty buffer (276-byte placeholder
+            // PNGs). Paused mode forces frame-step / seek-exact to be the
+            // only thing that advances the decoder, and each one produces
+            // exactly one real frame ready for screenshot capture.
+            set_opt(handle, "pause", "yes")?;
+            // Don't go to EOF as soon as a sparse / incomplete file's
+            // readable bytes run out; keep the file open so seek attempts
+            // can still try to read other regions.
+            set_opt(handle, "keep-open", "always")?;
             // Built-in downscale so every screenshot lands at thumb size.
             set_opt(handle, "vf", "scale=160:-2")?;
 
@@ -588,7 +610,7 @@ impl Player {
         unsafe {
             let evt = ffi::mpv_wait_event(self.handle, timeout);
             if evt.is_null() {
-                return MpvEvent::Other;
+                return MpvEvent::None;
             }
             let event_id = (*evt).event_id;
             let reply = (*evt).reply_userdata;
@@ -649,7 +671,8 @@ impl Player {
                     }
                 }
                 ffi::MPV_EVENT_SHUTDOWN => MpvEvent::Shutdown,
-                ffi::MPV_EVENT_NONE => MpvEvent::Other,
+                ffi::MPV_EVENT_NONE => MpvEvent::None,
+                ffi::MPV_EVENT_START_FILE => MpvEvent::StartFile,
                 _ => MpvEvent::Other,
             }
         }

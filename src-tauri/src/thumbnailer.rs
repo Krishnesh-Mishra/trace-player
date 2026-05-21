@@ -442,17 +442,46 @@ fn extract_one_frame(
 }
 
 /// Block on the thumbnailer's event pump until FILE_LOADED arrives (or we
-/// time out). Caller must already hold WORKER_LOCK.
+/// time out). Caller must already hold WORKER_LOCK and must have just
+/// issued `loadfile`.
+///
+/// Why this is more than a naive "wait for FileLoaded": mpv emits events
+/// in this order for a `loadfile replace` while a file is already loaded:
+///
+///   EndFile(old file unload) → StartFile(new file) → FileLoaded(new file)
+///
+/// A naive loop sees the unload's EndFile and incorrectly fails the new
+/// load. We use StartFile as the boundary — only events AFTER StartFile
+/// belong to this load. Before StartFile, EndFile/FileLoaded are stale
+/// (left over from the previous file).
 fn wait_for_load(thumb: &Player) -> Result<(), String> {
-    let deadline = std::time::Instant::now() + FILE_LOAD_TIMEOUT;
+    wait_for_load_with_timeout(thumb, FILE_LOAD_TIMEOUT)
+}
+
+fn wait_for_load_with_timeout(thumb: &Player, timeout: Duration) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    let mut our_load_started = false;
     loop {
         if std::time::Instant::now() > deadline {
             return Err("thumbnailer file-load timeout".to_string());
         }
         match thumb.wait_event(0.5) {
-            MpvEvent::FileLoaded => return Ok(()),
-            MpvEvent::EndFile { .. } => {
-                return Err("thumbnailer end-of-file before load".to_string())
+            MpvEvent::StartFile => {
+                our_load_started = true;
+            }
+            MpvEvent::FileLoaded => {
+                if our_load_started {
+                    return Ok(());
+                }
+                // Stale FileLoaded from a previous load — ignore.
+            }
+            MpvEvent::EndFile { reason, error } => {
+                if our_load_started {
+                    return Err(format!(
+                        "thumbnailer end-of-file before load (reason={reason} error={error})"
+                    ));
+                }
+                // Unload event for the previous file — ignore.
             }
             MpvEvent::Shutdown => return Err("thumbnailer shut down".to_string()),
             _ => continue,
@@ -481,19 +510,82 @@ fn wait_for_seek(thumb: &Player, timeout: Duration) {
 const LIB_THUMB_W: u32 = 320;
 const LIB_THUMB_H: u32 = 180;
 
+/// mpv's "screenshot-to-file video" can write a small PNG even when the
+/// decoded frame is corrupt — empirically ~3 KB when HEVC decode errors
+/// leave us with a black/garbage frame (sparse torrent file, partially-
+/// downloaded stream pieces, etc.). Real 160×90 PNGs of actual content
+/// land at 30 KB-plus on the screenshots we've sampled, with the lowest
+/// "real" content (very dark / near-uniform scenes) still north of ~15 KB.
+/// 8192 separates the failure cases cleanly without rejecting legitimate
+/// dark scenes; tune up only if we see false positives on real content.
+const MIN_VALID_SCREENSHOT_BYTES: u64 = 8192;
+/// Final JPEG (320×180, q=80) post-resize. A legitimate frame compresses to
+/// at least ~4–5 KB; anything smaller is the resized version of a broken
+/// screenshot and shouldn't be cached. Used both when saving fresh thumbs
+/// and when re-validating a previously-cached entry.
+const MIN_VALID_JPEG_BYTES: u64 = 4096;
+
 pub fn generate_persistent_thumb(
     thumb: &Player,
     source_path: &str,
     dest_path: &std::path::Path,
 ) -> Result<(), String> {
+    generate_persistent_thumb_with_timeouts(
+        thumb,
+        source_path,
+        dest_path,
+        FILE_LOAD_TIMEOUT,
+        Duration::from_secs(10),
+    )
+}
+
+/// Same as `generate_persistent_thumb` but with caller-supplied timeouts so
+/// torrent-stream callers (which need to wait for rqbit piece downloads) can
+/// extend them without changing local-file behavior.
+pub fn generate_persistent_thumb_with_timeouts(
+    thumb: &Player,
+    source_path: &str,
+    dest_path: &std::path::Path,
+    load_timeout: Duration,
+    seek_timeout: Duration,
+) -> Result<(), String> {
     crate::np_info!("thumb", "gen start: {}", source_path);
+
+    // Sparse-file shortcut: rqbit pre-allocates the full file size on disk
+    // before any pieces arrive, so the path exists but reads return zeros.
+    // mpv can't demux that — let's not even try, and surface a specific
+    // error so the caller can fall back to the stream URL.
+    if !is_url(source_path) {
+        match fs::metadata(source_path) {
+            Ok(m) if m.len() == 0 => {
+                crate::np_warn!("thumb", "source is 0 bytes, skip: {}", source_path);
+                return Err("source file is empty".to_string());
+            }
+            Err(e) => {
+                crate::np_warn!("thumb", "source metadata failed: {} ({e})", source_path);
+                return Err(format!("source metadata: {e}"));
+            }
+            _ => {}
+        }
+    }
+
     let _g = worker_lock()
         .lock()
         .map_err(|e| { crate::np_err!("thumb", "worker lock: {e}"); format!("worker lock: {e}") })?;
 
+    // Drain any stale events left behind by the previous job (e.g. a late
+    // FileLoaded from a load we abandoned on EndFile). Without this, the
+    // next wait_for_load can return Ok in ~0 ms by picking up the OLD
+    // file's FileLoaded and immediately try to seek before mpv has
+    // actually opened the new file.
+    drain_pending_events(thumb);
+
     crate::np_info!("thumb", "loading file in thumbnailer");
     thumb.load(source_path).map_err(|e| { crate::np_err!("thumb", "load failed: {e}"); format!("load: {e}") })?;
-    wait_for_load(thumb).map_err(|e| { crate::np_err!("thumb", "wait_for_load failed: {e}"); e })?;
+    wait_for_load_with_timeout(thumb, load_timeout).map_err(|e| {
+        crate::np_err!("thumb", "wait_for_load failed for {}: {e}", source_path);
+        e
+    })?;
 
     let duration = thumb.get_property_f64("duration").unwrap_or(0.0);
     if !duration.is_finite() || duration <= 0.0 {
@@ -504,15 +596,29 @@ pub fn generate_persistent_thumb(
     let seek_to = duration * 0.5;
     crate::np_info!("thumb", "seeking to {:.1}s (duration={:.1}s)", seek_to, duration);
     let t_str = format!("{:.3}", seek_to);
+    // Explicit `exact` flag — even with hr-seek=yes globally, the explicit
+    // form is unambiguous across mpv versions and forces frame-precise
+    // positioning rather than "to the nearest keyframe".
     thumb
-        .command_silent(&["seek", &t_str, "absolute"])
+        .command_silent(&["seek", &t_str, "absolute", "exact"])
         .map_err(|e| { crate::np_err!("thumb", "seek failed: {e}"); format!("seek: {e}") })?;
-    wait_for_seek(thumb, Duration::from_secs(10));
+    wait_for_seek(thumb, seek_timeout);
+
+    // With vo=null + pause=yes, the decoder doesn't pull a frame just from
+    // seeking — PlaybackRestart fires once the demuxer is positioned, but
+    // the actual frame stays undecoded until something pulls it. frame-step
+    // decodes exactly one frame and re-pauses. Without this the screenshot
+    // captures an empty buffer (~276-byte placeholder PNG).
+    let _ = thumb.command_silent(&["frame-step"]);
+    wait_for_seek(thumb, Duration::from_millis(800));
 
     let tmp_root = std::env::temp_dir().join("trace-player-thumb-tmp");
     let _ = fs::create_dir_all(&tmp_root);
     let tmp_file = tmp_root.join(format!("lib-{}.png", std::process::id()));
     let tmp_str = tmp_file.to_str().ok_or("bad tmp path")?;
+    // Drop any leftover from a prior run — mpv overwrites on write, but if
+    // a hung previous attempt left a 0-byte file we'd otherwise re-read it.
+    let _ = fs::remove_file(&tmp_file);
 
     crate::np_info!("thumb", "taking screenshot to {}", tmp_str);
     thumb
@@ -521,9 +627,16 @@ pub fn generate_persistent_thumb(
 
     let file_len = fs::metadata(&tmp_file).map(|m| m.len()).unwrap_or(0);
     crate::np_info!("thumb", "screenshot file size: {} bytes", file_len);
-    if file_len == 0 {
+    if file_len < MIN_VALID_SCREENSHOT_BYTES {
         let _ = fs::remove_file(&tmp_file);
-        return Err("screenshot produced empty file".to_string());
+        crate::np_err!(
+            "thumb",
+            "screenshot below {MIN_VALID_SCREENSHOT_BYTES} bytes (got {file_len}) — \
+             frame never decoded, likely sparse/incomplete source"
+        );
+        return Err(format!(
+            "screenshot too small ({file_len} bytes) — no real frame decoded"
+        ));
     }
 
     let img = ImageReader::open(&tmp_file)
@@ -541,8 +654,54 @@ pub fn generate_persistent_thumb(
     fs::write(dest_path, &jpeg_bytes).map_err(|e| format!("write thumb: {e}"))?;
     let _ = fs::remove_file(&tmp_file);
 
+    // Re-stat to catch antivirus/OneDrive-style truncation that can hit between
+    // fs::write returning Ok and the next reader opening the file. Also reject
+    // the resized JPEG if it ended up suspiciously small — that means we
+    // started from a broken decoder output (incomplete pieces, HEVC ref-frame
+    // errors, etc.) and the cached file would render as an empty box.
+    match fs::metadata(dest_path) {
+        Ok(m) if m.len() >= MIN_VALID_JPEG_BYTES => {}
+        Ok(m) => {
+            let len = m.len();
+            let _ = fs::remove_file(dest_path);
+            crate::np_err!(
+                "thumb",
+                "post-write check: {} too small ({len} bytes < {MIN_VALID_JPEG_BYTES}) — \
+                 source likely partial/corrupt, not caching",
+                dest_path.display()
+            );
+            return Err(format!("post-write check failed: jpeg too small ({len} bytes)"));
+        }
+        Err(e) => {
+            crate::np_err!("thumb", "post-write check: {} missing ({e})", dest_path.display());
+            return Err(format!("post-write check failed: {e}"));
+        }
+    }
+
     crate::np_info!("thumb", "saved to {:?}", dest_path);
     Ok(())
+}
+
+fn is_url(source: &str) -> bool {
+    let lower = source.to_ascii_lowercase();
+    lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("rtsp://")
+        || lower.starts_with("rtmp://")
+}
+
+/// Pull every pending event off the mpv queue without blocking, so the
+/// next wait_for_X call only sees events caused by THIS request.
+/// MpvEvent::None is the well-defined "queue is empty" sentinel since
+/// the player.rs FFI maps MPV_EVENT_NONE to it (distinct from `Other`
+/// which catches unrecognized event types).
+fn drain_pending_events(thumb: &Player) {
+    for _ in 0..512 {
+        match thumb.wait_event(0.0) {
+            MpvEvent::None => return,
+            _ => continue,
+        }
+    }
 }
 
 #[derive(serde::Serialize, Clone)]

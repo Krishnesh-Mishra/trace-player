@@ -246,7 +246,7 @@ pub fn start_event_loop(
                     frame_dismiss_count = 0;
                     let _ = app.emit("mpv:playback-restart", ());
                 }
-                MpvEvent::Other => {}
+                MpvEvent::None | MpvEvent::StartFile | MpvEvent::Other => {}
             }
         }
     });

@@ -108,6 +108,12 @@ export default function DownloadsView({ onPlayFile, onPlayTorrent }: DownloadsVi
   }, [loadRows]);
 
   useEffect(() => {
+    // Tracks which (magnet, file_index) pairs we've already back-filled into
+    // library.items so we don't re-issue the same UPDATE every poll tick. We
+    // only need this for the lifetime of the component — restart-on-mount is
+    // fine; the next library open re-scans for missing thumbs anyway.
+    const pathBackfilled = new Set<string>();
+
     const poll = async () => {
       try {
         const stats = await invoke<TorrentStats[]>("list_downloads");
@@ -140,6 +146,41 @@ export default function DownloadsView({ onPlayFile, onPlayTorrent }: DownloadsVi
               "UPDATE downloads SET title = $1 WHERE torrent_id = $2 AND title = ('Torrent #' || $2)",
               [s.name, s.torrentId],
             );
+          }
+
+          // When any file in this torrent has fully downloaded, ask rqbit for
+          // its on-disk path and back-fill the matching library item. The
+          // library auto-gen loop then picks up the populated `path` on the
+          // next library open and generates a thumb via the cheap local-file
+          // route (no stream-fallback needed).
+          for (const row of fileRows) {
+            const isComplete = row.total_bytes > 0 && row.progress_bytes >= row.total_bytes;
+            if (!isComplete) continue;
+            const key = `${row.magnet_uri}|${row.file_index ?? "-"}`;
+            if (pathBackfilled.has(key)) continue;
+            pathBackfilled.add(key);
+            try {
+              const localPath = await invoke<string | null>("get_torrent_file_path", {
+                magnet: row.magnet_uri,
+                fileIndex: row.file_index,
+              });
+              if (!localPath) continue;
+              if (row.file_index !== null) {
+                await db.execute(
+                  "UPDATE items SET path = $1 WHERE magnet_uri = $2 AND file_index = $3 AND (path IS NULL OR path = '')",
+                  [localPath, row.magnet_uri, row.file_index],
+                );
+              } else {
+                await db.execute(
+                  "UPDATE items SET path = $1 WHERE magnet_uri = $2 AND file_index IS NULL AND (path IS NULL OR path = '')",
+                  [localPath, row.magnet_uri],
+                );
+              }
+            } catch (e) {
+              // Re-try on next tick if backfill failed.
+              pathBackfilled.delete(key);
+              console.warn("[downloads] items.path backfill failed:", row.title, e);
+            }
           }
         }
       } catch {}

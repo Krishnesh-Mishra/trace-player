@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run vite",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run vite:build",
+    "beforeBuildCommand": "npm run build:all",
     "frontendDist": "../dist"
   },
   "app": {
@@ -40,7 +40,8 @@
     "resources": {
       "assets/libmpv-2.dll": "bin/libmpv-2.dll",
       "assets/rqbit.exe": "bin/rqbit.exe",
-      "resources/shaders/*.glsl": "shaders/"
+      "resources/shaders/*.glsl": "shaders/",
+      "shell-extension/target/release/trace_player_shellext.dll": "bin/trace-player-shellext.dll"
     },
     "fileAssociations": [
       {
@@ -58,7 +59,8 @@
     ],
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerHooks": "nsis/installer-hooks.nsh"
       }
     }
   }

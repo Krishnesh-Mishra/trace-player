@@ -7,6 +7,9 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "vite:build": "tsc && vite build",
+    "build:shellext": "cargo build --release --manifest-path src-tauri/shell-extension/Cargo.toml",
+    "prebuild:all": "npm run build:shellext",
+    "build:all": "npm run build:shellext && npm run vite:build",
     "vite": "vite",
     "tauri": "tauri"
   },

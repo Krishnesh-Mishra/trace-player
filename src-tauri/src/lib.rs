@@ -201,6 +201,87 @@ fn is_supported_source(s: &str) -> bool {
     )
 }
 
+/// Headless CLI handler for the Windows Shell extension. Invoked as
+/// `trace-player.exe --thumbnail-gen <video_path>`. Initializes the
+/// thumbnailer mpv, writes the middle-frame JPG to the shared
+/// `library-thumbs` cache (so the in-app library lookup and the shell
+/// extension share one cache), and exits. No window, no event loop.
+///
+/// Returns `Some(exit_code)` when the CLI flag was consumed; the caller
+/// should `std::process::exit(code)`. Returns `None` when the flag is
+/// absent so `run()` proceeds with the normal Tauri startup.
+pub fn handle_cli() -> Option<i32> {
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 1usize;
+    while i < args.len() {
+        if args[i] == "--thumbnail-gen" {
+            let video_path = match args.get(i + 1) {
+                Some(p) => p.clone(),
+                None => {
+                    eprintln!("--thumbnail-gen requires a path argument");
+                    return Some(2);
+                }
+            };
+            return Some(run_thumbnail_gen(&video_path));
+        }
+        i += 1;
+    }
+    None
+}
+
+fn run_thumbnail_gen(video_path: &str) -> i32 {
+    #[cfg(all(target_os = "windows", target_env = "msvc"))]
+    if let Err(e) = dll_bootstrap::extract_and_preload() {
+        eprintln!("libmpv preload failed: {e}");
+        return 3;
+    }
+
+    let thumbnailer = match Player::new_thumbnailer() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("thumbnailer init failed: {e}");
+            return 4;
+        }
+    };
+
+    // Mirror the same cache dir + hashing scheme `library::thumb_dir` and
+    // `library::path_hash` use, so the in-app library and the shell extension
+    // both look up by identical filenames.
+    let identifier = "com.krishnesh.traceplayer";
+    let base = match dirs::config_dir() {
+        Some(p) => p.join(identifier),
+        None => {
+            eprintln!("no config dir on this platform");
+            return 5;
+        }
+    };
+    let dir = base.join("library-thumbs");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("create thumb dir: {e}");
+        return 6;
+    }
+
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(video_path.as_bytes());
+    let digest = hasher.finalize();
+    let hash = hex::encode(&digest[..10]);
+    let dest = dir.join(format!("{hash}.jpg"));
+
+    if dest.exists() {
+        // Already cached — nothing to do.
+        return 0;
+    }
+
+    match thumbnailer::generate_persistent_thumb(&thumbnailer, video_path, &dest) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("generate thumb: {e}");
+            7
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     np_info!("boot", "Trace Player starting");
@@ -516,6 +597,9 @@ pub fn run() {
             library::scan_common_folders,
             library::get_file_metadata,
             library::probe_video_info,
+            library::find_torrent_local_path,
+            library::generate_torrent_stream_thumb,
+            library::is_thumb_valid,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
