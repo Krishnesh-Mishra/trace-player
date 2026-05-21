@@ -167,7 +167,7 @@ dependencies = [
 
 [[package]]
 name = "trace-player-shellext"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "hex",
  "image",
