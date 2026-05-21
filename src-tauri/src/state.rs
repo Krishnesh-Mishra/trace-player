@@ -175,7 +175,11 @@ pub struct ActiveTorrentItem {
 
 pub struct AppState {
     pub player: Option<Arc<Player>>,
-    pub thumbnailer: Option<Arc<Player>>,
+    /// Lazy thumbnailer mpv. Spawning a second mpv at startup adds ~100-200ms
+    /// of mpv_initialize + codec/font loading the user doesn't pay for unless
+    /// they actually open the library and generate thumbnails. Filled on
+    /// first thumbnail request via `get_or_init_thumbnailer`.
+    pub thumbnailer: Mutex<Option<Arc<Player>>>,
     pub agc: Arc<AgcController>,
     pub perf: Arc<PerfController>,
     pub pip: Arc<PipMemory>,
@@ -230,10 +234,10 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(player: Option<Arc<Player>>, thumbnailer: Option<Arc<Player>>) -> Self {
+    pub fn new(player: Option<Arc<Player>>) -> Self {
         Self {
             player,
-            thumbnailer,
+            thumbnailer: Mutex::new(None),
             agc: Arc::new(AgcController::new()),
             perf: Arc::new(PerfController::new()),
             pip: Arc::new(PipMemory::new()),
@@ -253,6 +257,29 @@ impl AppState {
             seeding_enabled: AtomicBool::new(false),
             resolving_torrent_id: Mutex::new(None),
             download_wanted_files: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Get or lazily create the thumbnailer mpv instance. Cheap on the
+    /// happy path (just a Mutex acquire + Arc clone). Construction only
+    /// happens once, on the first thumbnail request — startup never pays
+    /// for it.
+    pub fn get_or_init_thumbnailer(&self) -> Option<Arc<Player>> {
+        let mut guard = self.thumbnailer.lock().ok()?;
+        if let Some(p) = guard.as_ref() {
+            return Some(p.clone());
+        }
+        match Player::new_thumbnailer() {
+            Ok(p) => {
+                let arc = Arc::new(p);
+                *guard = Some(arc.clone());
+                crate::np_info!("boot", "thumbnailer mpv lazily created");
+                Some(arc)
+            }
+            Err(e) => {
+                crate::np_err!("boot", "thumbnailer mpv init failed: {e}");
+                None
+            }
         }
     }
 }

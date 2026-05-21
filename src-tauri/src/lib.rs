@@ -238,20 +238,13 @@ pub fn run() {
         }
     };
 
-    let thumbnailer_arc: Option<Arc<Player>> = match Player::new_thumbnailer() {
-        Ok(p) => {
-            np_info!("boot", "thumbnailer mpv created");
-            Some(Arc::new(p))
-        }
-        Err(e) => {
-            np_err!("boot", "thumbnailer mpv init failed: {e}");
-            None
-        }
-    };
+    // Thumbnailer mpv is lazily created via AppState::get_or_init_thumbnailer
+    // on the first thumbnail request. Spinning it up eagerly cost ~100-200ms
+    // at startup the user didn't see unless they opened the library.
 
     let player_for_setup = player_arc.clone();
 
-    let app_state = AppState::new(player_arc.clone(), thumbnailer_arc.clone());
+    let app_state = AppState::new(player_arc.clone());
     let agc_for_loop = app_state.agc.clone();
     let agc_for_events = app_state.agc.clone();
     let perf_for_power = app_state.perf.clone();
@@ -316,50 +309,19 @@ pub fn run() {
                     Box::<dyn std::error::Error>::from(msg)
                 })?;
 
-            // Locate the bundled shader directory (resources/shaders/*.glsl)
-            // for upscaling. Production builds receive the directory through
-            // Tauri's resource resolver; dev/cargo-run sessions don't get the
-            // resources copied into target/<profile>/, so walk up from the
-            // executable to find src-tauri/resources/shaders/. Whichever
-            // candidate exists wins — if none exist, upscaling silently
-            // falls back to the built-in scaler.
-            if let Some(shader_dir) = find_shader_dir(app) {
-                np_info!("boot", "shader_dir = {}", shader_dir.display());
-                perf_for_setup.set_shader_dir(shader_dir);
-            } else {
-                np_warn!("boot", "no shader_dir found in any candidate");
-            }
+            // Pure path arithmetic now; the filesystem candidate check
+            // happens on the deferred thread below.
+            let shader_cands = shader_candidates(app);
 
+            // Critical path — must complete before window.show() so mpv has
+            // a render target and the event loop is up to receive events
+            // the frontend will subscribe to.
             if let Some(ref player) = player_for_setup {
                 attach_mpv_to_window(player, &window);
 
-                // Cache the WebView HWND once; the dormant/wake commands
-                // reuse it without re-enumerating. Windows-only — on Linux
-                // the JS side handles dormancy via CSS alone.
-                #[cfg(target_os = "windows")]
-                {
-                    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-                    if let Ok(handle) = window.window_handle() {
-                        if let RawWindowHandle::Win32(h) = handle.as_raw() {
-                            let parent_hwnd = h.hwnd.get();
-                            set_window_black_background(parent_hwnd);
-                            if let Some(wv) = ui_visibility::find_webview(parent_hwnd) {
-                                np_info!("ui", "found WebView2 HWND {:#x}", wv);
-                                ui_for_setup.set_webview_hwnd(wv);
-                            } else {
-                                np_warn!(
-                                    "ui",
-                                    "WebView2 HWND not found — dormancy will be JS-only"
-                                );
-                            }
-                        }
-                    }
-                }
-
                 // Forward mouse + wheel events from mpv into the Rust event
-                // loop as `script-message ui-wake`. The events handler emits
-                // `ui:wake` to JS only when currently dormant, so the 60 Hz
-                // MOUSE_MOVE storm doesn't cross IPC during normal use.
+                // loop as `script-message ui-wake`. Must be set before any
+                // input could arrive.
                 for key in &[
                     "MOUSE_MOVE",
                     "MBTN_LEFT",
@@ -379,39 +341,9 @@ pub fn run() {
                     ui_for_events.clone(),
                 );
                 agc::start_agc_loop(player.clone(), agc_for_loop.clone());
-
-                // Windows: spin up SMTC + taskbar thumb-bar. Both feed into a
-                // single mpsc channel that a worker thread translates into
-                // mpv player commands.
-                #[cfg(target_os = "windows")]
-                {
-                    install_windows_integrations(&window, player.clone());
-                }
-
-                // Power detection: emit mpv:power-state on every flip, and
-                // when profile==Auto, re-resolve and re-apply the underlying
-                // mpv settings + emit mpv:perf-applied so the UI mirrors them.
-                let player_for_power = player.clone();
-                let perf_for_react = perf_for_power.clone();
-                power::start_power_loop(
-                    app.handle().clone(),
-                    perf_for_power.clone(),
-                    move |app_handle, _on_battery| {
-                        let dir = perf_for_react.shader_dir_clone();
-                        if let Some(resolved) = perf::react_to_power_change(
-                            &player_for_power,
-                            &perf_for_react,
-                            dir.as_ref(),
-                        ) {
-                            let _ = app_handle.emit("mpv:perf-applied", resolved);
-                        }
-                    },
-                );
             }
 
             // First-launch CLI arg ("Open with" → we are the new process).
-            // Stored in managed state so the frontend pulls it on mount via
-            // take_cli_file — no delayed event, no flash of the empty-state UI.
             let argv: Vec<String> = std::env::args().collect();
             let hover_preview = argv.iter().any(|a| a == "--hover" || a == "--hover=true");
             let _ = app
@@ -425,14 +357,73 @@ pub fn run() {
                     .map(|mut g| *g = Some(path));
             }
 
-            // Reveal the main window now that mpv is attached and the React
-            // frontend has had a chance to mount, then dismiss the splash so
-            // the handoff looks like a single uninterrupted load.
+            // Show the window NOW so first paint happens as soon as possible.
+            // Everything below this point runs while the user is already
+            // looking at the player — no longer blocks the splash → window
+            // handoff.
             let _ = window.show();
             let _ = window.set_focus();
             #[cfg(all(target_os = "windows", target_env = "msvc"))]
             if let Some(s) = splash_handle {
                 s.close();
+            }
+
+            // Deferred non-critical setup. WebView HWND lookup, SMTC,
+            // taskbar thumb-bar, and power-state polling can all happen
+            // after first paint — they're background services that don't
+            // gate any UI the user can interact with yet.
+            if let Some(player) = player_for_setup {
+                let window_for_deferred = window.clone();
+                let app_for_power = app.handle().clone();
+                let perf_for_react = perf_for_power.clone();
+                let player_for_power = player.clone();
+                std::thread::spawn(move || {
+                    // Resolve the shader directory on this background
+                    // thread — file existence checks would otherwise sit on
+                    // the main thread before first paint.
+                    if let Some(shader_dir) = pick_shader_dir(&shader_cands) {
+                        np_info!("boot", "shader_dir = {}", shader_dir.display());
+                        perf_for_setup.set_shader_dir(shader_dir);
+                    } else {
+                        np_warn!("boot", "no shader_dir found in any candidate");
+                    }
+
+                    #[cfg(target_os = "windows")]
+                    {
+                        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                        if let Ok(handle) = window_for_deferred.window_handle() {
+                            if let RawWindowHandle::Win32(h) = handle.as_raw() {
+                                let parent_hwnd = h.hwnd.get();
+                                set_window_black_background(parent_hwnd);
+                                if let Some(wv) = ui_visibility::find_webview(parent_hwnd) {
+                                    np_info!("ui", "found WebView2 HWND {:#x}", wv);
+                                    ui_for_setup.set_webview_hwnd(wv);
+                                } else {
+                                    np_warn!(
+                                        "ui",
+                                        "WebView2 HWND not found — dormancy will be JS-only"
+                                    );
+                                }
+                            }
+                        }
+                        install_windows_integrations(&window_for_deferred, player.clone());
+                    }
+
+                    power::start_power_loop(
+                        app_for_power,
+                        perf_for_power.clone(),
+                        move |app_handle, _on_battery| {
+                            let dir = perf_for_react.shader_dir_clone();
+                            if let Some(resolved) = perf::react_to_power_change(
+                                &player_for_power,
+                                &perf_for_react,
+                                dir.as_ref(),
+                            ) {
+                                let _ = app_handle.emit("mpv:perf-applied", resolved);
+                            }
+                        },
+                    );
+                });
             }
 
             Ok(())
@@ -564,7 +555,10 @@ pub fn run() {
 ///     target/<profile>/, so walk up from the executable until we hit
 ///     `<src-tauri>/resources/shaders/`.
 /// Returns the first candidate that contains at least one expected `.glsl`.
-fn find_shader_dir(app: &tauri::App) -> Option<std::path::PathBuf> {
+/// Collect candidate paths that might contain the bundled shaders. Pure
+/// path arithmetic — no filesystem I/O — so it's cheap to call from the
+/// main thread.
+fn shader_candidates(app: &tauri::App) -> Vec<std::path::PathBuf> {
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
 
     if let Ok(res) = app.path().resource_dir() {
@@ -584,8 +578,13 @@ fn find_shader_dir(app: &tauri::App) -> Option<std::path::PathBuf> {
             }
         }
     }
+    candidates
+}
 
-    for cand in &candidates {
+/// Filesystem search through candidate shader dirs. Runs on the deferred
+/// background thread to keep startup off the hot path.
+fn pick_shader_dir(candidates: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
+    for cand in candidates {
         if cand.join("FSRCNNX_x2_8-0-4-1.glsl").exists()
             || cand.join("FSRCNNX_x2_16-0-4-1.glsl").exists()
             || cand.join("KrigBilateral.glsl").exists()

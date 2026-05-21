@@ -638,6 +638,9 @@ export default function App() {
   // is loaded — buffering overlay stops gating, seek can no-op against
   // hasFile=false guards, etc. Listeners are already set up by the
   // previous useEffect; this just seeds the initial state once.
+  // Rehydrate from mpv state on mount. Deferred via rAF + idle so the first
+  // paint isn't blocked on an IPC roundtrip — on a cold start there's
+  // usually nothing to rehydrate anyway and the result returns instantly.
   useEffect(() => {
     type PlayerStateSnapshot = {
       path: string;
@@ -650,27 +653,35 @@ export default function App() {
       playlist: PlaylistItem[];
       tracks: { audio: Track[]; subtitle: Track[] };
     };
-    invoke<PlayerStateSnapshot>("get_player_state")
-      .then((s) => {
-        if (!s.path) return; // Nothing loaded — fresh boot, normal path.
-        log.info("rehydrate", `path=${s.path} timePos=${s.timePos.toFixed(1)} dur=${s.duration.toFixed(1)}`);
-        setHasFile(true);
-        setIsPlaying(!s.paused);
-        currentTimeRef.current = s.timePos;
-        setDisplayTime(s.timePos);
-        setDuration(s.duration);
-        if (s.duration > 0) progressRef.current = (s.timePos / s.duration) * 100;
-        setVolume(Math.round(s.volume));
-        setPlaybackSpeed(s.speed);
-        setPlaylist(s.playlist);
-        setAudioTracks(s.tracks.audio);
-        setSubtitleTracks(s.tracks.subtitle);
-        const selA = s.tracks.audio.find((t) => t.selected);
-        setSelectedAudio(selA ? String(selA.id) : "auto");
-        const selS = s.tracks.subtitle.find((t) => t.selected);
-        setSelectedSub(selS ? String(selS.id) : "no");
-      })
-      .catch((e) => log.warn("rehydrate", `get_player_state failed: ${e}`));
+    const rehydrate = () => {
+      invoke<PlayerStateSnapshot>("get_player_state")
+        .then((s) => {
+          if (!s.path) return;
+          log.info("rehydrate", `path=${s.path} timePos=${s.timePos.toFixed(1)} dur=${s.duration.toFixed(1)}`);
+          setHasFile(true);
+          setIsPlaying(!s.paused);
+          currentTimeRef.current = s.timePos;
+          setDisplayTime(s.timePos);
+          setDuration(s.duration);
+          if (s.duration > 0) progressRef.current = (s.timePos / s.duration) * 100;
+          setVolume(Math.round(s.volume));
+          setPlaybackSpeed(s.speed);
+          setPlaylist(s.playlist);
+          setAudioTracks(s.tracks.audio);
+          setSubtitleTracks(s.tracks.subtitle);
+          const selA = s.tracks.audio.find((t) => t.selected);
+          setSelectedAudio(selA ? String(selA.id) : "auto");
+          const selS = s.tracks.subtitle.find((t) => t.selected);
+          setSelectedSub(selS ? String(selS.id) : "no");
+        })
+        .catch((e) => log.warn("rehydrate", `get_player_state failed: ${e}`));
+    };
+    const ric = (window as unknown as { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback;
+    const handle = requestAnimationFrame(() => {
+      if (ric) ric(rehydrate);
+      else setTimeout(rehydrate, 0);
+    });
+    return () => cancelAnimationFrame(handle);
   }, []);
 
   // CLI file check — pull a pending "Open with" file from Rust state.

@@ -326,10 +326,8 @@ pub fn start_thumbnailing(
     app: AppHandle,
 ) -> Result<(), String> {
     let thumb = state
-        .thumbnailer
-        .as_ref()
-        .ok_or_else(|| "Thumbnailer not initialized".to_string())?
-        .clone();
+        .get_or_init_thumbnailer()
+        .ok_or_else(|| "Thumbnailer not initialized".to_string())?;
     thumbnailer::start_thumbnail_job(app, thumb, path);
     Ok(())
 }
@@ -346,10 +344,8 @@ pub fn request_thumb_window(
     app: AppHandle,
 ) -> Result<(), String> {
     let thumb = state
-        .thumbnailer
-        .as_ref()
-        .ok_or_else(|| "Thumbnailer not initialized".to_string())?
-        .clone();
+        .get_or_init_thumbnailer()
+        .ok_or_else(|| "Thumbnailer not initialized".to_string())?;
     thumbnailer::request_dense_window(app, thumb, t, radius, density);
     Ok(())
 }
@@ -365,10 +361,8 @@ pub fn request_thumb_exact(
     app: AppHandle,
 ) -> Result<(), String> {
     let thumb = state
-        .thumbnailer
-        .as_ref()
-        .ok_or_else(|| "Thumbnailer not initialized".to_string())?
-        .clone();
+        .get_or_init_thumbnailer()
+        .ok_or_else(|| "Thumbnailer not initialized".to_string())?;
     thumbnailer::request_exact_frame(app, thumb, t);
     Ok(())
 }

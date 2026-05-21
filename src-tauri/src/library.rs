@@ -76,8 +76,7 @@ pub async fn generate_library_thumb(
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     let thumbnailer = state
-        .thumbnailer
-        .clone()
+        .get_or_init_thumbnailer()
         .ok_or_else(|| "thumbnailer not available".to_string())?;
 
     let out_dir = thumb_dir(&app)?;
@@ -150,8 +149,7 @@ pub async fn probe_video_info(
     state: tauri::State<'_, AppState>,
 ) -> Result<thumbnailer::MediaInfo, String> {
     let thumbnailer = state
-        .thumbnailer
-        .clone()
+        .get_or_init_thumbnailer()
         .ok_or_else(|| "thumbnailer not available".to_string())?;
 
     let (tx, rx) = std::sync::mpsc::channel();
