@@ -2367,9 +2367,13 @@ pub fn exit_pip(window: tauri::WebviewWindow, state: State<'_, AppState>) -> Res
 /// the video stays at the pre-resize dimensions — visible to the user as
 /// an invisible/black overlay covering the screen while the video stays
 /// small. This is called from the frontend's onResized listener so it
-/// runs after the parent has actually resized.
+/// runs after the parent has actually resized. async so Tauri schedules it
+/// on the tokio pool instead of blocking the IPC handler thread — keeps
+/// play/pause/zoom invokes from queueing behind it during a window-drag
+/// storm. The actual work is just one PostMessageW; mpv's WndProc subclass
+/// reads the parent's client size when it processes WM_SIZE.
 #[tauri::command]
-pub fn resize_mpv_to_parent(window: tauri::WebviewWindow) -> Result<(), String> {
+pub async fn resize_mpv_to_parent(window: tauri::WebviewWindow) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -2377,7 +2381,6 @@ pub fn resize_mpv_to_parent(window: tauri::WebviewWindow) -> Result<(), String> 
 
         type HWND = *mut c_void;
         type BOOL = i32;
-        type LPARAM = isize;
 
         #[repr(C)]
         struct RECT {
@@ -2389,35 +2392,11 @@ pub fn resize_mpv_to_parent(window: tauri::WebviewWindow) -> Result<(), String> 
 
         extern "system" {
             fn GetClientRect(hwnd: HWND, rect: *mut RECT) -> BOOL;
-            fn EnumChildWindows(
-                parent: HWND,
-                cb: extern "system" fn(HWND, LPARAM) -> BOOL,
-                lparam: LPARAM,
-            ) -> BOOL;
-            fn GetClassNameW(hwnd: HWND, buf: *mut u16, max: i32) -> i32;
-            fn MoveWindow(hwnd: HWND, x: i32, y: i32, w: i32, h: i32, repaint: BOOL) -> BOOL;
-            fn SendMessageW(hwnd: HWND, msg: u32, wparam: usize, lparam: isize) -> isize;
+            fn PostMessageW(hwnd: HWND, msg: u32, wparam: usize, lparam: isize) -> BOOL;
         }
 
         const WM_SIZE: u32 = 0x0005;
         const SIZE_RESTORED: usize = 0;
-
-        extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
-            let mut buf = [0u16; 128];
-            let len = unsafe { GetClassNameW(hwnd, buf.as_mut_ptr(), 128) };
-            if len > 0 {
-                let cls = String::from_utf16_lossy(&buf[..len as usize]);
-                // Skip the WebView2 host — Tauri already resizes that.
-                if cls.starts_with("Chrome_WidgetWin_") {
-                    return 1;
-                }
-            }
-            unsafe {
-                let dims = &*(lparam as *const (i32, i32));
-                MoveWindow(hwnd, 0, 0, dims.0, dims.1, 1);
-            }
-            1
-        }
 
         let hwnd = match window.window_handle() {
             Ok(h) => match h.as_raw() {
@@ -2432,12 +2411,13 @@ pub fn resize_mpv_to_parent(window: tauri::WebviewWindow) -> Result<(), String> 
             if GetClientRect(hwnd, &mut rc) == 0 {
                 return Ok(());
             }
-            let dims = (rc.right - rc.left, rc.bottom - rc.top);
-            EnumChildWindows(hwnd, cb, &dims as *const (i32, i32) as LPARAM);
-            // Kick mpv's WndProc subclass — it watches WM_SIZE on the
-            // parent to know when to resize its swapchain.
-            let lparam_size = ((dims.1 as i32 as u32) << 16) | (dims.0 as i32 as u32 & 0xFFFF);
-            SendMessageW(hwnd, WM_SIZE, SIZE_RESTORED, lparam_size as isize);
+            let w = rc.right - rc.left;
+            let h = rc.bottom - rc.top;
+            // Post (don't Send) so we don't block this thread waiting for
+            // the target WndProc to finish. mpv picks it up on its next
+            // message-pump pass.
+            let lparam_size = ((h as u32) << 16) | (w as u32 & 0xFFFF);
+            PostMessageW(hwnd, WM_SIZE, SIZE_RESTORED, lparam_size as isize);
         }
     }
     #[cfg(not(target_os = "windows"))]

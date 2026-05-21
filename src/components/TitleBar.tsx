@@ -13,12 +13,34 @@ export default function TitleBar({ hasFile, isFullscreen }: Props) {
 
   useEffect(() => {
     const win = getCurrentWindow();
-    win.isMaximized().then(setMaximized).catch(() => {});
-    const unlisten = win.onResized(() => {
-      win.isMaximized().then(setMaximized).catch(() => {});
+    let active = true;
+
+    const check = () => {
+      win
+        .isMaximized()
+        .then((m) => {
+          if (active) setMaximized(m);
+        })
+        .catch(() => {});
+    };
+
+    check();
+    // onResized fires on every size change (maximize, restore, snap,
+    // double-click title, Win+Arrow); onMoved covers paths that change
+    // position without a size change; onFocusChanged catches state changes
+    // committed while the window was unfocused (e.g. Aero Snap from
+    // another app).
+    const unResized = win.onResized(check);
+    const unMoved = win.onMoved(check);
+    const unFocus = win.onFocusChanged(({ payload }) => {
+      if (payload) check();
     });
+
     return () => {
-      unlisten.then((f) => f());
+      active = false;
+      unResized.then((f) => f());
+      unMoved.then((f) => f());
+      unFocus.then((f) => f());
     };
   }, []);
 
@@ -47,7 +69,7 @@ export default function TitleBar({ hasFile, isFullscreen }: Props) {
 
   return (
     <div
-      className="absolute top-0 left-0 right-0  z-[80] flex justify-center"
+      className="absolute top-0 left-0 right-0  z-[9999] flex justify-center"
       style={{ minHeight: 8 }}
       onMouseEnter={handleEnter}
       onMouseLeave={handleLeave}

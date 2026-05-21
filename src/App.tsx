@@ -1103,19 +1103,28 @@ export default function App() {
     }
   }, []);
 
-  // Sync fullscreen state + force mpv's child to fill the parent on resize.
-  // Tauri's set_fullscreen (and maximize/restore) doesn't reliably propagate
-  // WM_SIZE through to the child window mpv created via --wid, leaving the
-  // video at the pre-resize size while the Tauri window covers the screen.
-  // resize_mpv_to_parent walks the child HWNDs and explicitly resizes mpv's.
+  // Sync fullscreen state + force mpv's child to refill the parent on every
+  // resize. mpv's --wid WndProc subclass normally handles WM_SIZE, but
+  // Tauri's setFullscreen path on Windows doesn't reliably reach it. We
+  // skip if an invoke is already in flight so the IPC channel can't back
+  // up during a window-drag storm.
   useEffect(() => {
     let active = true;
+    let pending = false;
     const win = getCurrentWindow();
     const unlisten = win.onResized(() => {
-      invoke("resize_mpv_to_parent").catch(() => {});
-      win.isFullscreen().then((fs) => {
-        if (active) setIsFullscreen(fs);
-      }).catch(() => {});
+      if (!pending) {
+        pending = true;
+        invoke("resize_mpv_to_parent").finally(() => {
+          pending = false;
+        });
+      }
+      win
+        .isFullscreen()
+        .then((fs) => {
+          if (active) setIsFullscreen(fs);
+        })
+        .catch(() => {});
     });
     return () => {
       active = false;
@@ -1124,20 +1133,22 @@ export default function App() {
   }, []);
 
   // ── command helpers (callable from keyboard + UI) ───────────────────────────
-  const playPause = useCallback(async () => {
+  // Optimistic UI: flip the playing state immediately so the button icon
+  // and any dependent UI react instantly instead of waiting on the IPC
+  // round-trip + mpv:pause event. The event listener will reconcile the
+  // truth value when it arrives; if the command failed, we revert.
+  const playPause = useCallback(() => {
     if (!hasFileRef.current) return;
-    try {
-      if (isPlayingRef.current) {
-        log.info("ui", "playPause -> pause");
-        await invoke("pause");
-      } else {
-        log.info("ui", "playPause -> play");
-        await invoke("play");
-      }
-    } catch (e) {
+    const wasPlaying = isPlayingRef.current;
+    setIsPlaying(!wasPlaying);
+    isPlayingRef.current = !wasPlaying;
+    log.info("ui", `playPause -> ${wasPlaying ? "pause" : "play"}`);
+    invoke(wasPlaying ? "pause" : "play").catch((e) => {
       log.err("ui", `playPause failed: ${String(e)}`);
+      setIsPlaying(wasPlaying);
+      isPlayingRef.current = wasPlaying;
       setError(String(e));
-    }
+    });
   }, []);
 
   const seekRelative = useCallback((delta: number) => {

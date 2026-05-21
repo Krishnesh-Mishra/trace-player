@@ -1,11 +1,34 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Search, Film, Play } from "lucide-react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Search,
+  Film,
+  Play,
+  Copy,
+  Info,
+  ListPlus,
+  X,
+} from "lucide-react";
 import type { ExploreVideo } from "./types";
+import ContextMenu, { type ContextMenuItem } from "./ContextMenu";
 
 interface Props {
   onPlayFile: (path: string) => void;
+}
+
+interface FileMeta {
+  size: number;
+  created: number | null;
+  modified: number | null;
+}
+
+interface MediaInfo {
+  width: number;
+  height: number;
+  videoCount: number;
+  audioCount: number;
+  subtitleCount: number;
 }
 
 function fmtSize(bytes: number): string {
@@ -13,6 +36,11 @@ function fmtSize(bytes: number): string {
   if (bytes < 1024 * 1024 * 1024)
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function fmtDate(epoch: number | null): string {
+  if (!epoch) return "Unknown";
+  return new Date(epoch * 1000).toLocaleString();
 }
 
 export default function LibraryExploreView({ onPlayFile }: Props) {
@@ -27,9 +55,18 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
   const thumbActiveRef = useRef(false);
   const thumbQueueRef = useRef<string[]>([]);
 
+  const [ctxMenu, setCtxMenu] = useState<{
+    x: number;
+    y: number;
+    items: ContextMenuItem[];
+  } | null>(null);
+  const [propsVideo, setPropsVideo] = useState<ExploreVideo | null>(null);
+
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -86,6 +123,44 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
       setLoading(false);
     }
   }, [query]);
+
+  const handleContext = useCallback(
+    (e: React.MouseEvent, video: ExploreVideo) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const items: ContextMenuItem[] = [
+        {
+          label: "Play",
+          icon: <Play className="w-3.5 h-3.5" />,
+          onClick: () => onPlayFile(video.path),
+        },
+        {
+          label: "Add to Playlist",
+          icon: <ListPlus className="w-3.5 h-3.5" />,
+          onClick: () => {
+            invoke("playlist_add", { path: video.path }).catch(() => {});
+          },
+        },
+        { label: "", separator: true, onClick: () => {} },
+        {
+          label: "Copy",
+          icon: <Copy className="w-3.5 h-3.5" />,
+          shortcut: "Ctrl+C",
+          onClick: () => {
+            navigator.clipboard.writeText(video.path).catch(() => {});
+          },
+        },
+        { label: "", separator: true, onClick: () => {} },
+        {
+          label: "Properties",
+          icon: <Info className="w-3.5 h-3.5" />,
+          onClick: () => setPropsVideo(video),
+        },
+      ];
+      setCtxMenu({ x: e.clientX, y: e.clientY, items });
+    },
+    [onPlayFile],
+  );
 
   const displayResults = searched ? results : autoResults;
   const isLoading = searched ? loading : autoLoading;
@@ -159,6 +234,7 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
                   className="group cursor-pointer"
                   whileTap={{ scale: 0.97 }}
                   onClick={() => onPlayFile(video.path)}
+                  onContextMenu={(e) => handleContext(e, video)}
                 >
                   <div className="relative aspect-video rounded-lg overflow-hidden bg-[var(--np-hover)]">
                     {thumbCache.has(video.path) ? (
@@ -194,6 +270,133 @@ export default function LibraryExploreView({ onPlayFile }: Props) {
           </>
         )}
       </div>
+
+      <ContextMenu
+        open={ctxMenu !== null}
+        x={ctxMenu?.x ?? 0}
+        y={ctxMenu?.y ?? 0}
+        items={ctxMenu?.items ?? []}
+        onClose={() => setCtxMenu(null)}
+      />
+
+      <ExplorePropertiesDialog
+        video={propsVideo}
+        onClose={() => setPropsVideo(null)}
+      />
     </div>
+  );
+}
+
+function ExplorePropertiesDialog({
+  video,
+  onClose,
+}: {
+  video: ExploreVideo | null;
+  onClose: () => void;
+}) {
+  const [fileMeta, setFileMeta] = useState<FileMeta | null>(null);
+  const [mediaInfo, setMediaInfo] = useState<MediaInfo | null>(null);
+
+  useEffect(() => {
+    if (!video) {
+      setFileMeta(null);
+      setMediaInfo(null);
+      return;
+    }
+    invoke<FileMeta>("get_file_metadata", { path: video.path })
+      .then(setFileMeta)
+      .catch(() => {});
+    invoke<MediaInfo>("probe_video_info", { path: video.path })
+      .then(setMediaInfo)
+      .catch(() => {});
+  }, [video]);
+
+  useEffect(() => {
+    if (!video) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [video, onClose]);
+
+  const rows: { label: string; value: string }[] = [];
+  if (video) {
+    rows.push({ label: "Name", value: video.name });
+    rows.push({ label: "Path", value: video.path });
+    rows.push({ label: "Size", value: fmtSize(fileMeta?.size ?? video.size) });
+    if (mediaInfo && mediaInfo.width > 0 && mediaInfo.height > 0) {
+      rows.push({
+        label: "Resolution",
+        value: `${mediaInfo.width}x${mediaInfo.height}`,
+      });
+    }
+    if (mediaInfo) {
+      rows.push({ label: "Video Streams", value: String(mediaInfo.videoCount) });
+      rows.push({ label: "Audio Streams", value: String(mediaInfo.audioCount) });
+      rows.push({ label: "Subtitles", value: String(mediaInfo.subtitleCount) });
+    }
+    if (fileMeta?.created)
+      rows.push({ label: "Created", value: fmtDate(fileMeta.created) });
+    if (fileMeta?.modified)
+      rows.push({ label: "Modified", value: fmtDate(fileMeta.modified) });
+  }
+
+  return (
+    <AnimatePresence>
+      {video && (
+        <motion.div
+          className="absolute inset-0 z-[70] flex items-center justify-center"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+        >
+          <div className="absolute inset-0 bg-black/50" />
+          <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Properties"
+            className="relative bg-[var(--np-overlay)] rounded-2xl shadow-2xl w-[360px] p-5"
+            initial={{ scale: 0.92, y: -8 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.92, y: -8 }}
+            transition={{ type: "spring", stiffness: 380, damping: 28 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-[var(--np-text)]">
+                Properties
+              </h3>
+              <button
+                onClick={onClose}
+                aria-label="Close"
+                className="w-6 h-6 flex items-center justify-center text-[var(--np-text-tertiary)]
+                           hover:text-[var(--np-text)] rounded-md hover:bg-[var(--np-hover)] cursor-pointer
+                           transition-colors duration-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {rows.map((row) => (
+                <div key={row.label} className="flex gap-3">
+                  <span className="text-[11px] text-[var(--np-text-tertiary)] w-20 shrink-0">
+                    {row.label}
+                  </span>
+                  <span className="text-[11px] text-[var(--np-text)] break-all">
+                    {row.value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
