@@ -1408,6 +1408,34 @@ pub fn cancel_torrent_resolve(state: State<'_, AppState>) -> Result<(), String> 
     Ok(())
 }
 
+/// Abort whatever source-acquisition work is currently in flight: cancels a
+/// pending magnet/torrent resolve, forgets every active streaming torrent,
+/// clears mpv's playlist so the in-progress loadfile gives up, and emits
+/// source-loading-done so the overlay closes. Bound to the Cancel button
+/// in LoadingSourceOverlay for the "this is taking too long, get me out"
+/// case.
+#[tauri::command]
+pub fn cancel_active_source(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    crate::np_info!("cmd", "cancel_active_source");
+    // Best-effort cancel of an in-flight resolve.
+    let _ = cancel_torrent_resolve(state.clone());
+    // Forget every torrent we've added this session and clear the
+    // active-torrent / archive bookkeeping.
+    drop_previous_sources(state.inner());
+    // Tell mpv to drop the current load.
+    if let Some(p) = &state.player {
+        let _ = p.command(&["playlist-clear"]);
+        let _ = p.command(&["stop"]);
+    }
+    // Close the overlay immediately so the user gets feedback even if
+    // mpv's stop takes a beat to propagate.
+    let _ = app.emit("mpv:source-loading-done", ());
+    Ok(())
+}
+
 #[tauri::command]
 pub fn list_downloads(state: State<'_, AppState>) -> Result<Vec<crate::streaming::TorrentStats>, String> {
     let ids: Vec<u32> = state
@@ -1607,7 +1635,15 @@ fn ensure_streaming(
                 "rqbit.exe not found in bin/ — installer must place it next to NewPlayer.exe"
                     .to_string()
             })?;
-            let upload_limit = state.upload_limit_bytes.load(Ordering::Relaxed);
+            // If the user has "Seed downloaded videos" off, force the upload
+            // rate to effectively zero (1 byte/sec — rqbit treats 0 as
+            // unlimited, so we use the smallest non-zero cap instead).
+            let user_upload = state.upload_limit_bytes.load(Ordering::Relaxed);
+            let upload_limit = if state.seeding_enabled.load(Ordering::Relaxed) {
+                user_upload
+            } else {
+                1
+            };
             let download_limit = state.download_limit_bytes.load(Ordering::Relaxed);
             let session = StreamingSession::start(
                 &exe,
@@ -1966,6 +2002,11 @@ pub fn set_torrent_upload_limit(state: State<'_, AppState>, bytes: u64) {
 #[tauri::command]
 pub fn set_torrent_download_limit(state: State<'_, AppState>, bytes: u64) {
     state.download_limit_bytes.store(bytes, Ordering::Relaxed);
+}
+
+#[tauri::command]
+pub fn set_seeding_enabled(state: State<'_, AppState>, enabled: bool) {
+    state.seeding_enabled.store(enabled, Ordering::Relaxed);
 }
 
 #[tauri::command]

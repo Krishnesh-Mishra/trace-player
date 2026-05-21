@@ -46,6 +46,7 @@ export default function TorrentSettings() {
   const [uploadLimit, setUploadLimit] = useState(0);
   const [downloadLimit, setDownloadLimit] = useState(0);
   const [maxConnections, setMaxConnections] = useState(0);
+  const [seedingEnabled, setSeedingEnabled] = useState(false);
 
   useEffect(() => {
     Store.load("trace-player-settings.json")
@@ -58,9 +59,23 @@ export default function TorrentSettings() {
         if (typeof download === "number") setDownloadLimit(download);
         const conns = await s.get<number>("torrentMaxConnections");
         if (typeof conns === "number") setMaxConnections(conns);
+        const seed = await s.get<boolean>("seedDownloadedVideos");
+        const seedOn = typeof seed === "boolean" ? seed : false;
+        setSeedingEnabled(seedOn);
+        invoke("set_seeding_enabled", { enabled: seedOn }).catch(() => {});
       })
       .catch(() => {});
   }, []);
+
+  const applySeeding = (enabled: boolean) => {
+    setSeedingEnabled(enabled);
+    Store.load("trace-player-settings.json")
+      .then((s) =>
+        s.set("seedDownloadedVideos", enabled).then(() => s.save()),
+      )
+      .catch(() => {});
+    invoke("set_seeding_enabled", { enabled }).catch(() => {});
+  };
 
   const applyCache = (bytes: number) => {
     setCacheLimit(bytes);
@@ -239,6 +254,33 @@ export default function TorrentSettings() {
             </ListBox>
           </Select.Popover>
         </Select>
+      </div>
+
+      <div className="h-px bg-[var(--np-divider)] my-4" />
+
+      {/* Seed downloaded videos */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-[12px] text-[var(--np-text)]">
+            Seed downloaded videos
+          </div>
+          <p className="text-[9px] text-[var(--np-text-muted)] mt-1 leading-snug">
+            When off, the player won't upload pieces back to the swarm.
+            Takes effect on the next torrent session.
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={seedingEnabled}
+          onClick={() => applySeeding(!seedingEnabled)}
+          className={`relative shrink-0 w-9 h-5 rounded-full transition-colors duration-150 cursor-pointer
+                     ${seedingEnabled ? "bg-[var(--np-toggle-on)]" : "bg-[var(--np-toggle-off)]"}`}
+        >
+          <span
+            className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full transition-transform duration-150
+                       ${seedingEnabled ? "translate-x-4 bg-[var(--np-toggle-dot-on)]" : "translate-x-0 bg-[var(--np-toggle-dot-off)]"}`}
+          />
+        </button>
       </div>
     </>
   );

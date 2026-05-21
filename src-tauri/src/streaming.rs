@@ -20,6 +20,99 @@ pub struct StreamingSession {
     child: Child,
     base_url: String,
     http: ureq::Agent,
+    /// Windows job-object handle. The kernel auto-kills every process
+    /// assigned to this job when the handle closes — which happens
+    /// implicitly when our parent process dies, no matter how (clean exit,
+    /// crash, taskkill, debugger detach). Keeps rqbit from orphaning
+    /// after repeated app open/close cycles.
+    #[cfg(target_os = "windows")]
+    _job: Option<usize>, // HANDLE-as-usize so Send/Sync stays auto-derived
+}
+
+/// Create a Windows Job Object configured to terminate every assigned
+/// process when the parent (us) exits, then assign `child` to it. Returns
+/// the HANDLE as isize so it can sit inside Send/Sync structs.
+#[cfg(target_os = "windows")]
+fn assign_child_to_kill_job(child: &Child) -> Option<usize> {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
+        per_process_user_time_limit: i64,
+        per_job_user_time_limit: i64,
+        limit_flags: u32,
+        minimum_working_set_size: usize,
+        maximum_working_set_size: usize,
+        active_process_limit: u32,
+        affinity: usize,
+        priority_class: u32,
+        scheduling_class: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct IO_COUNTERS {
+        read_op_count: u64,
+        write_op_count: u64,
+        other_op_count: u64,
+        read_transfer_count: u64,
+        write_transfer_count: u64,
+        other_transfer_count: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+        basic_limit_information: JOBOBJECT_BASIC_LIMIT_INFORMATION,
+        io_info: IO_COUNTERS,
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory_used: usize,
+        peak_job_memory_used: usize,
+    }
+
+    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x00002000;
+    // JobObjectExtendedLimitInformation
+    const JOB_OBJECT_EXTENDED_LIMIT_INFO_CLASS: u32 = 9;
+
+    extern "system" {
+        fn CreateJobObjectW(security: *mut c_void, name: *const u16) -> *mut c_void;
+        fn SetInformationJobObject(
+            job: *mut c_void,
+            info_class: u32,
+            info: *const c_void,
+            info_size: u32,
+        ) -> i32;
+        fn AssignProcessToJobObject(job: *mut c_void, process: *mut c_void) -> i32;
+        fn CloseHandle(h: *mut c_void) -> i32;
+    }
+
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+        if job.is_null() {
+            return None;
+        }
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(
+            job,
+            JOB_OBJECT_EXTENDED_LIMIT_INFO_CLASS,
+            &info as *const _ as *const c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) == 0
+        {
+            CloseHandle(job);
+            return None;
+        }
+        let process_handle = child.as_raw_handle() as *mut c_void;
+        if AssignProcessToJobObject(job, process_handle) == 0 {
+            CloseHandle(job);
+            return None;
+        }
+        Some(job as usize)
+    }
 }
 
 /// Lightweight, cloneable handle to the rqbit HTTP API. Callers can extract
@@ -182,6 +275,13 @@ impl StreamingSession {
 
         let mut child = cmd.spawn().map_err(|e| format!("spawn rqbit.exe: {e}"))?;
 
+        // Assign the child to a kill-on-job-close Job Object. If our process
+        // dies for ANY reason (clean exit, crash, taskkill, debugger detach),
+        // the kernel terminates rqbit too — no more orphan accumulation
+        // across repeated open/close cycles.
+        #[cfg(target_os = "windows")]
+        let job = assign_child_to_kill_job(&child);
+
         let stdout = child
             .stdout
             .take()
@@ -259,6 +359,8 @@ impl StreamingSession {
             child,
             base_url: format!("http://127.0.0.1:{port}"),
             http,
+            #[cfg(target_os = "windows")]
+            _job: job,
         })
     }
 
@@ -776,23 +878,36 @@ pub fn fetch_stats(http: &ureq::Agent, base_url: &str, id: u32) -> Result<Torren
 impl Drop for StreamingSession {
     fn drop(&mut self) {
         let _ = self.child.kill();
-        // Give the child 3 seconds to exit cleanly before we give up.
+        // Give the child a brief window to exit cleanly. Don't sit here too
+        // long — the Job Object closure below is the real safety net.
         use std::time::Instant;
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             match self.child.try_wait() {
-                Ok(Some(_)) => break, // exited
+                Ok(Some(_)) => break,
                 Ok(None) => {
                     if Instant::now() >= deadline {
-                        eprintln!("[streaming] rqbit did not exit in 3s, abandoning");
+                        eprintln!("[streaming] rqbit slow to exit, job-close will kill it");
                         break;
                     }
-                    std::thread::sleep(Duration::from_millis(100));
+                    std::thread::sleep(Duration::from_millis(50));
                 }
                 Err(e) => {
                     eprintln!("[streaming] rqbit wait error: {e}");
                     break;
                 }
+            }
+        }
+        // Close the Job Object handle — with KILL_ON_JOB_CLOSE this forces
+        // any still-alive processes in the job to terminate, no waiting.
+        #[cfg(target_os = "windows")]
+        if let Some(h) = self._job.take() {
+            use std::ffi::c_void;
+            extern "system" {
+                fn CloseHandle(h: *mut c_void) -> i32;
+            }
+            unsafe {
+                CloseHandle(h as *mut c_void);
             }
         }
         crate::np_info!("rqbit", "sidecar terminated");

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
-import { Loader2 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { Loader2, X } from "lucide-react";
 
 /**
  * Shown while the backend is doing slow source-acquisition work the user
@@ -272,6 +273,18 @@ export default function LoadingSourceOverlay() {
                   <Stat label="ETA" value={fmtEta(stats.etaSeconds)} />
                 </div>
               )}
+              <button
+                onClick={() => {
+                  invoke("cancel_active_source").catch(() => {});
+                }}
+                className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-md
+                           text-[11px] text-[var(--np-text-secondary)] hover:text-[var(--np-text)]
+                           bg-[var(--np-hover)] hover:bg-[var(--np-active)]
+                           transition-colors duration-100 cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+                Cancel
+              </button>
             </div>
           </motion.div>
         </motion.div>

@@ -507,9 +507,11 @@ pub fn run() {
             commands::set_torrent_upload_limit,
             commands::set_torrent_download_limit,
             commands::set_torrent_max_connections,
+            commands::set_seeding_enabled,
             commands::resolve_torrent_files,
             commands::resolve_torrent_file,
             commands::cancel_torrent_resolve,
+            commands::cancel_active_source,
             commands::list_downloads,
             commands::pause_download,
             commands::resume_download,
@@ -538,6 +540,15 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::Exit) {
                 let st: tauri::State<'_, AppState> = app_handle.state();
                 commands::forget_all_torrents(st.inner());
+                // Explicitly drop the StreamingSession instead of trusting
+                // the Arc refcount to fall to zero — polling threads keep
+                // clones alive past app exit, which leaves rqbit running.
+                // take()ing the Option here triggers Drop synchronously and
+                // the Job Object's KILL_ON_JOB_CLOSE finishes anything that
+                // didn't exit gracefully in time.
+                if let Ok(mut g) = st.streaming.lock() {
+                    drop(g.take());
+                }
                 // Signal the AGC polling thread to terminate so it doesn't
                 // keep running after the app tears down.
                 st.agc.stop();

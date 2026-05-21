@@ -216,6 +216,10 @@ pub struct AppState {
     pub upload_limit_bytes: std::sync::atomic::AtomicU64,
     /// Download rate limit in bytes/sec (0 = unlimited). Applied at next rqbit spawn.
     pub download_limit_bytes: std::sync::atomic::AtomicU64,
+    /// When false (default), force the upload rate limit to ~0 bytes/sec at
+    /// rqbit spawn — the player won't seed torrents back to the swarm.
+    /// Frontend exposes this as the "Seed downloaded videos" toggle.
+    pub seeding_enabled: AtomicBool,
     /// Torrent ID currently being resolved in `resolve_torrent_files`.
     /// Set after `add_magnet` returns so `cancel_torrent_resolve` can forget it.
     pub resolving_torrent_id: Mutex<Option<u32>>,
@@ -246,6 +250,7 @@ impl AppState {
             cache_limit_bytes: std::sync::atomic::AtomicU64::new(0),
             upload_limit_bytes: std::sync::atomic::AtomicU64::new(524288), // 0.5 MiB/s default
             download_limit_bytes: std::sync::atomic::AtomicU64::new(0),
+            seeding_enabled: AtomicBool::new(false),
             resolving_torrent_id: Mutex::new(None),
             download_wanted_files: Mutex::new(HashMap::new()),
         }
