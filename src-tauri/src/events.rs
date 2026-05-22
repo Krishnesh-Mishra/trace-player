@@ -382,28 +382,52 @@ fn handle_property_change(
 }
 
 /// `script-message <name>` from mpv arrives here. The only message we forward
-/// is `ui-wake`: when the WebView is hidden (is_dormant=true), un-hide it,
-/// flip the flag, and emit `ui:wake` to JS so it can re-open the controls
-/// with its existing entrance animation. While not dormant the message is
-/// dropped — MOUSE_MOVE fires per pixel during scrubbing and we don't want
-/// 60 IPC events/second.
+/// is `ui-wake`. Two cases:
+///   - WebView is hidden (is_dormant=true): un-hide it, flip the flag, and
+///     emit `ui:wake` so JS re-opens the controls.
+///   - WebView is visible but controls have auto-hidden: emit `ui:wake` so
+///     JS shows the bar again. The mpv child captures mouse events when the
+///     cursor is over the video area, so the React `onMouseMove` path on
+///     the WebView never fires — without this branch the controls only
+///     come back on keypress.
+/// Rate-limited to 500 ms because MOUSE_MOVE fires per pixel and JS only
+/// needs one wake per hide-timer cycle to keep the bar up.
 fn handle_client_message(app: &AppHandle, ui: &UiController, args: Vec<String>) {
     let Some(name) = args.first() else { return };
     if name != "ui-wake" {
         return;
     }
-    if ui
+    let was_dormant = ui
         .is_dormant
         .compare_exchange(true, false, Ordering::AcqRel, Ordering::Relaxed)
-        .is_ok()
-    {
+        .is_ok();
+
+    if !was_dormant {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let last = ui.last_wake_emit_ms.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(last) < 500 {
+            return;
+        }
+        ui.last_wake_emit_ms.store(now_ms, Ordering::Relaxed);
+    } else {
         if let Some(hwnd) = ui.webview_hwnd_value() {
             crate::show_webview(hwnd);
         }
-        crate::np_info!("ui", "wake (mpv input)");
-        if let Err(e) = app.emit("ui:wake", ()) {
-            eprintln!("[events] emit failed: {e}");
-        }
+        crate::np_info!("ui", "wake (mpv input, was dormant)");
+        // Reset the rate-limit window so the next non-dormant wake doesn't
+        // get rejected immediately after we come out of dormancy.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        ui.last_wake_emit_ms.store(now_ms, Ordering::Relaxed);
+    }
+
+    if let Err(e) = app.emit("ui:wake", ()) {
+        eprintln!("[events] emit failed: {e}");
     }
 }
 

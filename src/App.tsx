@@ -1073,10 +1073,17 @@ export default function App() {
     let active = true;
     let unlisten: (() => void) | undefined;
     listen("ui:wake", () => {
-      if (!isDormantRef.current) return;
-      isDormantRef.current = false;
-      setShowControls(true);
-      scheduleHide();
+      // Rust emits this on any mpv input (mouse move, click, wheel). Two
+      // cases collapse into the same handling: dormant → clear the flag so
+      // future events don't try to un-hide twice; non-dormant → just refresh
+      // controls. The mpv child captures mouse events over the video, so
+      // the React onMouseMove on the root div never fires for those — this
+      // is how the bar comes back when the cursor moves over mpv.
+      if (isDormantRef.current) isDormantRef.current = false;
+      if (hasFileRef.current) {
+        setShowControls(true);
+        scheduleHide();
+      }
     }).then((fn) => {
       if (active) unlisten = fn;
       else fn(); // effect already cleaned up, immediately unlisten
@@ -1619,8 +1626,12 @@ export default function App() {
       upsertWatchHistory(path);
 
       // Auto-populate playlist with sibling video files from the same folder.
+      // Runs for any local file regardless of where it came from (file dialog,
+      // Windows "Open with" / cli, Recent, drag-drop) — they all funnel here.
       if (!isArchive && !isNetworkPath(path)) {
-        const sep = path.lastIndexOf("\\") >= 0 ? path.lastIndexOf("\\") : path.lastIndexOf("/");
+        const bs = path.lastIndexOf("\\");
+        const fs = path.lastIndexOf("/");
+        const sep = Math.max(bs, fs);
         if (sep >= 0) {
           const parentDir = path.slice(0, sep);
           try {
@@ -1628,10 +1639,15 @@ export default function App() {
               "read_directory_videos",
               { path: parentDir },
             );
+            // Windows paths can come back with different casing than what
+            // was passed in — normalize both sides before filtering or the
+            // currently-playing file gets re-appended as a "sibling".
+            const currentNorm = path.toLowerCase().replace(/\\/g, "/");
             const sorted = siblings
-              .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }))
-              .filter((v) => v.path !== path);
+              .filter((v) => v.path.toLowerCase().replace(/\\/g, "/") !== currentNorm)
+              .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
             if (sorted.length > 0) {
+              log.info("load", `auto-populate playlist with ${sorted.length} sibling(s)`);
               await invoke("playlist_add_many", { paths: sorted.map((v) => v.path) });
             }
           } catch (dirErr) {

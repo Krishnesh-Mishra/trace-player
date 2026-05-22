@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::archive::ArchiveRegistry;
@@ -134,6 +134,10 @@ impl PipMemory {
 pub struct UiController {
     pub is_dormant: AtomicBool,
     pub webview_hwnd: Mutex<Option<isize>>,
+    /// Monotonic millisecond stamp of the last `ui:wake` event emitted to JS.
+    /// Used to rate-limit the per-pixel MOUSE_MOVE storm so JS receives at
+    /// most one wake event per ~500 ms while the cursor is moving over mpv.
+    pub last_wake_emit_ms: AtomicU64,
 }
 
 impl UiController {
@@ -141,6 +145,7 @@ impl UiController {
         Self {
             is_dormant: AtomicBool::new(false),
             webview_hwnd: Mutex::new(None),
+            last_wake_emit_ms: AtomicU64::new(0),
         }
     }
 

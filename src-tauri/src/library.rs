@@ -215,8 +215,14 @@ pub async fn probe_video_info(
 
 #[tauri::command]
 pub async fn read_directory_videos(path: String) -> Result<Vec<DirVideo>, String> {
+    // No `is_path_allowed` here: this is called for the parent folder of a
+    // file the user has already loaded into the player (sibling-playlist
+    // population), or for an explorer-style path the user typed in the
+    // Library UI. Both cases are user-authorized — restricting to ~home
+    // breaks playback siblings for any video opened from `D:\Movies\` etc.
+    // We still only return video-extension filenames + sizes, never the
+    // file contents.
     let dir = PathBuf::from(&path);
-    is_path_allowed(&dir)?;
     if !dir.is_dir() {
         return Err(format!("not a directory: {path}"));
     }
