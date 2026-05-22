@@ -1,6 +1,6 @@
 [package]
 name = "trace-player-shellext"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "Windows Shell thumbnail provider for Trace Player video files"
 
