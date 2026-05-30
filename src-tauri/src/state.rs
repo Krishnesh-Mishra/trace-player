@@ -6,10 +6,9 @@ use crate::player::Player;
 
 // ── AGC ─────────────────────────────────────────────────────────────────────
 
-/// Live AGC (Automatic Gain Control) state. Kept (though disabled by default
-/// in the lite build) because `set_volume` still threads through it — user_volume
-/// is tracked separately from mpv's actual volume property so future AGC work
-/// can re-enable without touching the volume call sites.
+/// Live AGC (Automatic Gain Control) state. Volume nudges happen on a
+/// polling thread; user_volume is tracked separately so the UI slider stays
+/// put while AGC adjusts mpv's volume property under it.
 pub struct AgcController {
     pub enabled: AtomicBool,
     pub params: Mutex<AgcParams>,
@@ -44,8 +43,12 @@ impl AgcController {
 
 // ── Performance / Power ─────────────────────────────────────────────────────
 
+/// Performance profile + battery state. The active profile string is stored
+/// so the power-detection thread can re-resolve "auto" without keeping its
+/// own enum copy. shader_dir is set once at startup from the Tauri resource
+/// dir and read by perf::apply_upscaling.
 pub struct PerfController {
-    pub profile: Mutex<String>,
+    pub profile: Mutex<String>, // serialized PerfProfile
     pub on_battery: AtomicBool,
     pub shader_dir: Mutex<Option<PathBuf>>,
 }
@@ -60,8 +63,13 @@ impl PerfController {
     }
 
     pub fn set_shader_dir(&self, dir: PathBuf) {
-        if let Ok(mut g) = self.shader_dir.lock() {
-            *g = Some(dir);
+        match self.shader_dir.lock() {
+            Ok(mut g) => {
+                *g = Some(dir);
+            }
+            Err(e) => {
+                eprintln!("[state] shader_dir lock poisoned: {e}");
+            }
         }
     }
 
@@ -69,7 +77,6 @@ impl PerfController {
         self.shader_dir.lock().ok().and_then(|g| g.clone())
     }
 
-    #[allow(dead_code)]
     pub fn set_profile(&self, name: &str) {
         if let Ok(mut g) = self.profile.lock() {
             *g = name.to_string();
@@ -89,8 +96,10 @@ impl PerfController {
     }
 }
 
-// ── PiP ─────────────────────────────────────────────────────────────────────
+// ── App ─────────────────────────────────────────────────────────────────────
 
+/// Pre-PiP window geometry, stashed so exit_pip can restore the window to
+/// where the user had it. None when not currently in PiP.
 #[derive(Clone, Debug)]
 pub struct PipGeometry {
     pub width: u32,
@@ -114,9 +123,17 @@ impl PipMemory {
 
 // ── UI dormancy ─────────────────────────────────────────────────────────────
 
+/// Tracks whether the WebView overlay is currently hidden for power saving.
+/// `webview_hwnd` is the cached HWND of the WebView2 child window (Windows
+/// only) found at startup so subsequent show/hide calls don't re-enumerate.
+/// `is_dormant` is the source of truth — checked by the mpv event loop so a
+/// MOUSE_MOVE storm only emits one ui:wake per dormancy cycle.
 pub struct UiController {
     pub is_dormant: AtomicBool,
     pub webview_hwnd: Mutex<Option<isize>>,
+    /// Monotonic millisecond stamp of the last `ui:wake` event emitted to JS.
+    /// Used to rate-limit the per-pixel MOUSE_MOVE storm so JS receives at
+    /// most one wake event per ~500 ms while the cursor is moving over mpv.
     pub last_wake_emit_ms: AtomicU64,
 }
 
@@ -139,8 +156,6 @@ impl UiController {
         self.webview_hwnd.lock().ok().and_then(|g| *g)
     }
 }
-
-// ── App ─────────────────────────────────────────────────────────────────────
 
 pub struct AppState {
     pub player: Option<Arc<Player>>,
@@ -165,6 +180,10 @@ impl AppState {
         }
     }
 
+    /// Get or lazily create the thumbnailer mpv instance. Cheap on the
+    /// happy path (just a Mutex acquire + Arc clone). Construction only
+    /// happens once, on the first thumbnail request — startup never pays
+    /// for it.
     pub fn get_or_init_thumbnailer(&self) -> Option<Arc<Player>> {
         let mut guard = self.thumbnailer.lock().ok()?;
         if let Some(p) = guard.as_ref() {
