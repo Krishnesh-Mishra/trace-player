@@ -99,7 +99,6 @@ interface Props {
   onSourceLocal: () => void;
   onSourceNetwork: () => void;
   onSourceRecent: () => void;
-  onLibraryOpen: () => void;
   onOpenSettings: () => void;
   appearance: AppearanceState;
   onAppearanceChange: (a: AppearanceState) => void;
@@ -389,7 +388,6 @@ export default function SettingsMenu(props: Props) {
                 onLocal={() => { onClose(); props.onSourceLocal(); }}
                 onNetwork={() => { onClose(); props.onSourceNetwork(); }}
                 onRecent={() => { onClose(); props.onSourceRecent(); }}
-                onLibrary={() => { onClose(); props.onLibraryOpen(); }}
                 onBack={() => goBackTo("video_main")}
               />
             )}

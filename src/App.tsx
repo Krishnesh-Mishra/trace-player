@@ -2165,7 +2165,6 @@ export default function App() {
             onSourceLocal={handleOpenFile}
             onSourceNetwork={openSourceNetwork}
             onSourceRecent={openSourceRecent}
-            onLibraryOpen={noop}
             onOpenSettings={noop}
             theme={theme}
             onThemeChange={setTheme}

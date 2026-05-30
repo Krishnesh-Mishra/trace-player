@@ -11,7 +11,6 @@ import {
   ListVideo,
   Info,
   Timer,
-  Library,
 } from "lucide-react";
 
 import Timeline from "./controls/Timeline";
@@ -144,7 +143,6 @@ interface ControlBarProps {
   onSourceLocal: () => void;
   onSourceNetwork: () => void;
   onSourceRecent: () => void;
-  onLibraryOpen: () => void;
   showThumbnails?: boolean;
 }
 
@@ -225,7 +223,6 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
     onSourceLocal,
     onSourceNetwork,
     onSourceRecent,
-    onLibraryOpen,
     onOpenSettings,
     theme,
     onThemeChange,
@@ -400,19 +397,6 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
                    transition-colors duration-100`}
         whileHover={{ scale: 1.08 }}
         whileTap={{ scale: 0.88 }}
-        onClick={onLibraryOpen}
-        aria-label="Library"
-        title="Library"
-      >
-        <Library className={iconSize} />
-      </motion.button>
-
-      <motion.button
-        className={`${btnSize} flex items-center justify-center text-[var(--np-text-secondary)]
-                   hover:text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
-                   transition-colors duration-100`}
-        whileHover={{ scale: 1.08 }}
-        whileTap={{ scale: 0.88 }}
         onClick={onFullscreenToggle}
         aria-label="Fullscreen"
         title="Fullscreen (F)"
@@ -501,7 +485,6 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
           onSourceLocal={onSourceLocal}
           onSourceNetwork={onSourceNetwork}
           onSourceRecent={onSourceRecent}
-          onLibraryOpen={onLibraryOpen}
           onOpenSettings={onOpenSettings}
           appearance={appearance}
           onAppearanceChange={onAppearanceChange}
@@ -511,7 +494,7 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
       </div>
     </>
   ), [volume, isMuted, isFullscreen, settingsOpen, onMuteToggle, onVolumeChange,
-      onLibraryOpen, onFullscreenToggle, playbackSpeed, onSpeedChange,
+      onFullscreenToggle, playbackSpeed, onSpeedChange,
       audioTracks, subtitleTracks, selectedAudioId, selectedSubId,
       onAudioTrackChange, onSubtitleTrackChange, onOpenSubtitlePanel, onLoadSubtitle,
       monoAudio, dynamicAudio, onMonoAudioToggle, onDynamicAudioChange,
