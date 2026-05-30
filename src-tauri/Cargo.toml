@@ -1,6 +1,6 @@
 [package]
 name = "trace-player"
-version = "1.0.2-lite"
+version = "1.0.0"
 description = "Trace Player Lite — modern desktop video player (lite build)"
 authors = ["krishnesh"]
 edition = "2021"

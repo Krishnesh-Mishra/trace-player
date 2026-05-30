@@ -4,13 +4,25 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 interface Props {
   hasFile: boolean;
   isFullscreen: boolean;
+  alwaysShow: boolean;
+  widthMode: "full" | "small";
+  onContextMenu: (x: number, y: number) => void;
 }
 
-export default function TitleBar({ hasFile, isFullscreen }: Props) {
+export default function TitleBar({
+  hasFile,
+  isFullscreen,
+  alwaysShow,
+  widthMode,
+  onContextMenu,
+}: Props) {
   const [maximized, setMaximized] = useState(false);
   const [hovered, setHovered] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Display-only state. Click handlers re-query Tauri so they never act on
+  // a stale value (Aero Snap, Win+Arrow, and external state changes can
+  // desync the React copy faster than the event callbacks reconcile it).
   useEffect(() => {
     const win = getCurrentWindow();
     let active = true;
@@ -25,11 +37,6 @@ export default function TitleBar({ hasFile, isFullscreen }: Props) {
     };
 
     check();
-    // onResized fires on every size change (maximize, restore, snap,
-    // double-click title, Win+Arrow); onMoved covers paths that change
-    // position without a size change; onFocusChanged catches state changes
-    // committed while the window was unfocused (e.g. Aero Snap from
-    // another app).
     const unResized = win.onResized(check);
     const unMoved = win.onMoved(check);
     const unFocus = win.onFocusChanged(({ payload }) => {
@@ -65,7 +72,41 @@ export default function TitleBar({ hasFile, isFullscreen }: Props) {
     return clearTimer;
   }, [clearTimer]);
 
-  const expanded = !hasFile || hovered || (!maximized && !isFullscreen);
+  const handleMinimize = useCallback(async () => {
+    try {
+      await getCurrentWindow().minimize();
+    } catch {}
+  }, []);
+
+  const handleToggleMaximize = useCallback(async () => {
+    const win = getCurrentWindow();
+    try {
+      const m = await win.isMaximized();
+      if (m) await win.unmaximize();
+      else await win.maximize();
+      setMaximized(!m);
+    } catch {}
+  }, []);
+
+  const handleClose = useCallback(async () => {
+    try {
+      await getCurrentWindow().close();
+    } catch {}
+  }, []);
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onContextMenu(e.clientX, e.clientY);
+    },
+    [onContextMenu],
+  );
+
+  const expanded =
+    alwaysShow || !hasFile || hovered || (!maximized && !isFullscreen);
+
+  const widthClass = widthMode === "full" ? "w-[96vw]" : "w-[32vw]";
 
   return (
     <div
@@ -73,9 +114,11 @@ export default function TitleBar({ hasFile, isFullscreen }: Props) {
       style={{ minHeight: 8 }}
       onMouseEnter={handleEnter}
       onMouseLeave={handleLeave}
+      onContextMenu={handleContextMenu}
+      data-no-app-ctx
     >
       <div
-        className={`flex items-center justify-between select-none w-[50vw] overflow-hidden
+        className={`flex items-center justify-between select-none ${widthClass} overflow-hidden
                     transition-all  duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
                     ${expanded
                       ? "h-9 mt-1.5 px-1 opacity-100 bg-[var(--np-overlay-heavy)] [backdrop-filter:var(--np-backdrop-blur)] rounded-full"
@@ -107,7 +150,7 @@ export default function TitleBar({ hasFile, isFullscreen }: Props) {
           {!isFullscreen && (
             <>
               <button
-                onClick={() => getCurrentWindow().minimize()}
+                onClick={handleMinimize}
                 className="w-7 h-7 flex items-center justify-center rounded-full
                            text-[var(--np-text-muted)] hover:text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)]
                            transition-colors duration-100 cursor-pointer"
@@ -124,7 +167,7 @@ export default function TitleBar({ hasFile, isFullscreen }: Props) {
               </button>
 
               <button
-                onClick={() => getCurrentWindow().toggleMaximize()}
+                onClick={handleToggleMaximize}
                 className="w-7 h-7 flex items-center justify-center rounded-full
                            text-[var(--np-text-muted)] hover:text-[var(--np-text-secondary)] hover:bg-[var(--np-hover)]
                            transition-colors duration-100 cursor-pointer"
@@ -167,7 +210,7 @@ export default function TitleBar({ hasFile, isFullscreen }: Props) {
           )}
 
           <button
-            onClick={() => getCurrentWindow().close()}
+            onClick={handleClose}
             className="w-7 h-7 flex items-center justify-center rounded-full
                        text-[var(--np-text-muted)] hover:bg-red-500/80 hover:text-white
                        transition-colors duration-100 cursor-pointer"

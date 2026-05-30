@@ -86,46 +86,16 @@ mod ui_visibility {
 /// throttling in Chromium (rAF drops to ~1 Hz). Mouse events fall
 /// through to mpv's render child, whose MOUSE_MOVE keybind fires the
 /// ui-wake path.
+// Windows HWND hide/show is disabled — when the webview is removed from the
+// compositor, mouse-move events stop reaching React, so the controls only
+// come back on a button click instead of cursor movement. JS-side dormancy
+// (CSS opacity + setShowControls(false)) gives the same visual effect while
+// keeping the webview a live mouse target.
 #[cfg(target_os = "windows")]
-pub(crate) fn hide_webview(hwnd: isize) {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, HWND_TOP, SWP_HIDEWINDOW, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    };
-    unsafe {
-        let h = HWND(hwnd as *mut core::ffi::c_void);
-        let _ = SetWindowPos(
-            h,
-            HWND_TOP,
-            0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_HIDEWINDOW,
-        );
-    }
-}
+pub(crate) fn hide_webview(_hwnd: isize) {}
 
-/// Restore the WebView2 overlay after dormancy. Keeps SWP_NOZORDER so
-/// we don't disturb the WebView↔mpv child Z-order, which matters in
-/// fullscreen — promoting the WebView to top can hide mpv's render
-/// child or break its WM_SIZE subclass handling.
 #[cfg(target_os = "windows")]
-pub(crate) fn show_webview(hwnd: isize) {
-    use windows::Win32::Foundation::{BOOL, HWND};
-    use windows::Win32::Graphics::Gdi::InvalidateRect;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, ShowWindow, HWND_TOP, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_SHOWNA,
-    };
-    unsafe {
-        let h = HWND(hwnd as *mut core::ffi::c_void);
-        let _ = SetWindowPos(
-            h,
-            HWND_TOP,
-            0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW,
-        );
-        let _ = ShowWindow(h, SW_SHOWNA);
-        let _ = InvalidateRect(h, None, BOOL(1));
-    }
-}
+pub(crate) fn show_webview(_hwnd: isize) {}
 
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn hide_webview(_hwnd: isize) {

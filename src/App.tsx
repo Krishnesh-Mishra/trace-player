@@ -45,6 +45,7 @@ const OpenSourceDialog = lazy(() => import("./components/OpenSourceDialog"));
 const RecentSourcesPanel = lazy(() => import("./components/RecentSourcesPanel"));
 const SubtitleSettingsPanel = lazy(() => import("./components/SubtitleSettingsPanel"));
 const LazyDevTester = import.meta.env.DEV ? lazy(() => import("./components/DevTester")) : null;
+const TitleBarContextMenu = lazy(() => import("./components/TitleBarContextMenu"));
 import GestureLayer from "./components/GestureLayer";
 import PipBar from "./components/PipBar";
 import AppContextMenu from "./components/AppContextMenu";
@@ -182,6 +183,9 @@ export default function App() {
 
   const [deinterlace, setDeinterlace] = useState(false);
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const [titlebarAlwaysShow, setTitlebarAlwaysShow] = useState(false);
+  const [titlebarWidth, setTitlebarWidth] = useState<"full" | "small">("small");
+  const [titlebarMenu, setTitlebarMenu] = useState<{ x: number; y: number } | null>(null);
   const [audioDevice, setAudioDevice] = useState("auto");
   const [watchHistory, setWatchHistory] = useState<WatchHistoryEntry[]>([]);
   const [jumpToTimeOpen, setJumpToTimeOpen] = useState(false);
@@ -293,9 +297,13 @@ export default function App() {
         if (displayTimeCounter.current % 10 === 0) {
           setDisplayTime(t);
         }
-        // Persist resume position every 30s
+        // Persist resume position every 5s. 30s was too coarse — short
+        // sessions never made it to the first save, so reopening played
+        // from start. 5s is a tolerable amount of progress to forget on
+        // a hard quit and still hits the DB infrequently enough to stay
+        // off the audio thread.
         const now = Date.now();
-        if (now - lastPositionSaveRef.current > 30_000 && currentFilePathRef.current) {
+        if (now - lastPositionSaveRef.current > 5_000 && currentFilePathRef.current) {
           lastPositionSaveRef.current = now;
           getDb().then(db => db.execute(
             "UPDATE watch_history SET position = $1, duration = $2 WHERE path = $3",
@@ -581,7 +589,7 @@ export default function App() {
         )).then(rows => {
           const entry = rows[0];
           if (!entry) return;
-          if (entry.position > 10 && entry.duration > 0 && entry.position < entry.duration - 30) {
+          if (entry.position > 5 && entry.duration > 0 && entry.position < entry.duration - 30) {
             invoke("seek", { seconds: entry.position, mode: "absolute" }).catch(() => {});
           }
           if (entry.subtitle_path) {
@@ -765,6 +773,8 @@ export default function App() {
           legacyRecent,
           savedPip,
           savedCacheLimit,
+          savedTbAlwaysShow,
+          savedTbWidth,
         ] = await Promise.all([
           s.get<SubtitleStyle>("subtitleStyle"),
           s.get<number>("subtitleDelay"),
@@ -786,6 +796,8 @@ export default function App() {
           s.get<string[]>("recentFiles"),
           s.get<boolean>("pipMode"),
           s.get<number>("torrentCacheLimitBytes"),
+          s.get<boolean>("titlebarAlwaysShow"),
+          s.get<"full" | "small">("titlebarWidth"),
         ]);
         if (cancelled) return;
         if (savedStyle) setSubtitleStyle(savedStyle);
@@ -824,6 +836,8 @@ export default function App() {
         if (typeof savedCacheLimit === "number" && savedCacheLimit > 0) {
           invoke("set_torrent_cache_limit", { bytes: savedCacheLimit }).catch(() => {});
         }
+        if (typeof savedTbAlwaysShow === "boolean") setTitlebarAlwaysShow(savedTbAlwaysShow);
+        if (savedTbWidth === "full" || savedTbWidth === "small") setTitlebarWidth(savedTbWidth);
         // Defer non-critical post-load work until the browser is idle so it
         // doesn't compete with first paint.
         const ric: (cb: () => void) => void =
@@ -969,6 +983,16 @@ export default function App() {
     storeRef.current.set("pipMode", pipMode).then(() => saveStore()).catch(() => {});
   }, [pipMode]);
 
+  useEffect(() => {
+    if (!storeLoadedRef.current || !storeRef.current) return;
+    storeRef.current.set("titlebarAlwaysShow", titlebarAlwaysShow).then(() => saveStore()).catch(() => {});
+  }, [titlebarAlwaysShow]);
+
+  useEffect(() => {
+    if (!storeLoadedRef.current || !storeRef.current) return;
+    storeRef.current.set("titlebarWidth", titlebarWidth).then(() => saveStore()).catch(() => {});
+  }, [titlebarWidth]);
+
 
   // Whenever loop mode changes (incl. initial load), push to mpv. Two
   // independent properties — file and playlist — both off when "off".
@@ -1109,6 +1133,39 @@ export default function App() {
     pipMode,
     clearDormancyTimer,
   ]);
+
+  // Flush current playback position on app close so a clean quit
+  // doesn't lose the last few seconds of progress. The 5s background
+  // throttle covers most cases; this is the safety net for the final
+  // tail when the user closes the window directly.
+  useEffect(() => {
+    const flush = () => {
+      const path = currentFilePathRef.current;
+      const t = currentTimeRef.current;
+      const d = durationRef.current;
+      if (!path || t <= 0) return;
+      getDb().then((db) =>
+        db.execute(
+          "UPDATE watch_history SET position = $1, duration = $2 WHERE path = $3",
+          [t, d, path],
+        ),
+      ).catch(() => {});
+    };
+    window.addEventListener("pagehide", flush);
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onCloseRequested(() => {
+        flush();
+      })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -1904,7 +1961,26 @@ export default function App() {
       onMouseLeave={handleMouseLeave}
       style={{ cursor: showControls || !hasFile ? "default" : "none" }}
     >
-      <TitleBar hasFile={hasFile} isFullscreen={isFullscreen} />
+      <TitleBar
+        hasFile={hasFile}
+        isFullscreen={isFullscreen}
+        alwaysShow={titlebarAlwaysShow}
+        widthMode={titlebarWidth}
+        onContextMenu={(x, y) => setTitlebarMenu({ x, y })}
+      />
+      {titlebarMenu && (
+        <Suspense fallback={null}>
+          <TitleBarContextMenu
+            x={titlebarMenu.x}
+            y={titlebarMenu.y}
+            alwaysShow={titlebarAlwaysShow}
+            widthMode={titlebarWidth}
+            onToggleAlwaysShow={() => setTitlebarAlwaysShow((v) => !v)}
+            onSetWidth={(w) => setTitlebarWidth(w)}
+            onClose={() => setTitlebarMenu(null)}
+          />
+        </Suspense>
+      )}
 
       {/* Pointer-event overlay (touch + mouse). Replaces the simple click-to-play div. */}
       <GestureLayer
