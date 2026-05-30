@@ -39,7 +39,8 @@
     ],
     "resources": {
       "assets/libmpv-2.dll": "bin/libmpv-2.dll",
-      "resources/shaders/*.glsl": "shaders/"
+      "resources/shaders/*.glsl": "shaders/",
+      "shell-extension/target/release/trace_player_shellext.dll": "bin/trace-player-shellext.dll"
     },
     "fileAssociations": [
       {

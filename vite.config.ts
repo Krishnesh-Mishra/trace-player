@@ -24,4 +24,23 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  build: {
+    target: 'esnext',
+    minify: 'esbuild',
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ['react', 'react-dom'],
+          motion: ['framer-motion'],
+          tauri: [
+            '@tauri-apps/api',
+            '@tauri-apps/plugin-store',
+            '@tauri-apps/plugin-dialog',
+            '@tauri-apps/plugin-sql',
+          ],
+        },
+      },
+    },
+  },
 }));

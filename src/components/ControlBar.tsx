@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, memo } from "react";
+import { useEffect, useState, useMemo, memo, lazy, Suspense } from "react";
 import React from "react";
 import { motion } from "framer-motion";
 import {
@@ -16,7 +16,7 @@ import {
 import Timeline from "./controls/Timeline";
 import VolumeControl from "./controls/VolumeControl";
 import PlaybackButtons from "./controls/PlaybackButtons";
-import SettingsMenu from "./controls/settings/SettingsMenu";
+const SettingsMenu = lazy(() => import("./controls/settings/SettingsMenu"));
 import { fmtTime } from "./types";
 import type { ThemeChoice } from "../hooks/useTheme";
 
@@ -428,69 +428,73 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
           </motion.div>
         </motion.button>
 
-        <SettingsMenu
-          open={settingsOpen}
-          barSize={barSize}
-          onClose={() => setSettingsOpen(false)}
-          playbackSpeed={playbackSpeed}
-          onSpeedChange={onSpeedChange}
-          audioTracks={audioTracks}
-          subtitleTracks={subtitleTracks}
-          selectedAudioId={selectedAudioId}
-          selectedSubId={selectedSubId}
-          onAudioTrackChange={onAudioTrackChange}
-          onSubtitleTrackChange={onSubtitleTrackChange}
-          onOpenSubtitlePanel={onOpenSubtitlePanel}
-          onLoadSubtitle={onLoadSubtitle}
-          monoAudio={monoAudio}
-          dynamicAudio={dynamicAudio}
-          onMonoAudioToggle={onMonoAudioToggle}
-          onDynamicAudioChange={onDynamicAudioChange}
-          imageParams={imageParams}
-          videoState={videoState}
-          onImageParamsChange={onImageParamsChange}
-          onVideoStateChange={onVideoStateChange}
-          hdrMode={hdrMode}
-          hdrInfo={hdrInfo}
-          onHdrModeChange={onHdrModeChange}
-          upscaling={upscaling}
-          onUpscalingChange={onUpscalingChange}
-          interpolation={interpolation}
-          vsync={vsync}
-          exclusiveFullscreen={exclusiveFullscreen}
-          onInterpolationChange={onInterpolationChange}
-          onVsyncChange={onVsyncChange}
-          onExclusiveFullscreenChange={onExclusiveFullscreenChange}
-          perfProfile={perfProfile}
-          perfEffective={perfEffective}
-          onBattery={onBattery}
-          onPerfProfileChange={onPerfProfileChange}
-          audioFx={audioFx}
-          onAudioFxChange={onAudioFxChange}
-          deinterlace={deinterlace}
-          onDeinterlaceToggle={onDeinterlaceToggle}
-          currentAudioDevice={audioDevice}
-          onAudioDeviceChange={onAudioDeviceChange}
-          loopMode={loopMode}
-          onLoopCycle={onLoopCycle}
-          playlistCount={playlistCount}
-          onPlaylistToggle={onPlaylistToggle}
-          onScreenshot={onScreenshot}
-          abLoopActive={abLoopActive}
-          onAbLoopCycle={onAbLoopCycle}
-          alwaysOnTop={alwaysOnTop}
-          onAlwaysOnTopToggle={onAlwaysOnTopToggle}
-          onJumpToTime={onJumpToTime}
-          onMediaInfo={onMediaInfo}
-          onSourceLocal={onSourceLocal}
-          onSourceNetwork={onSourceNetwork}
-          onSourceRecent={onSourceRecent}
-          onOpenSettings={onOpenSettings}
-          appearance={appearance}
-          onAppearanceChange={onAppearanceChange}
-          theme={theme}
-          onThemeChange={onThemeChange}
-        />
+        {settingsOpen && (
+          <Suspense fallback={null}>
+            <SettingsMenu
+              open={settingsOpen}
+              barSize={barSize}
+              onClose={() => setSettingsOpen(false)}
+              playbackSpeed={playbackSpeed}
+              onSpeedChange={onSpeedChange}
+              audioTracks={audioTracks}
+              subtitleTracks={subtitleTracks}
+              selectedAudioId={selectedAudioId}
+              selectedSubId={selectedSubId}
+              onAudioTrackChange={onAudioTrackChange}
+              onSubtitleTrackChange={onSubtitleTrackChange}
+              onOpenSubtitlePanel={onOpenSubtitlePanel}
+              onLoadSubtitle={onLoadSubtitle}
+              monoAudio={monoAudio}
+              dynamicAudio={dynamicAudio}
+              onMonoAudioToggle={onMonoAudioToggle}
+              onDynamicAudioChange={onDynamicAudioChange}
+              imageParams={imageParams}
+              videoState={videoState}
+              onImageParamsChange={onImageParamsChange}
+              onVideoStateChange={onVideoStateChange}
+              hdrMode={hdrMode}
+              hdrInfo={hdrInfo}
+              onHdrModeChange={onHdrModeChange}
+              upscaling={upscaling}
+              onUpscalingChange={onUpscalingChange}
+              interpolation={interpolation}
+              vsync={vsync}
+              exclusiveFullscreen={exclusiveFullscreen}
+              onInterpolationChange={onInterpolationChange}
+              onVsyncChange={onVsyncChange}
+              onExclusiveFullscreenChange={onExclusiveFullscreenChange}
+              perfProfile={perfProfile}
+              perfEffective={perfEffective}
+              onBattery={onBattery}
+              onPerfProfileChange={onPerfProfileChange}
+              audioFx={audioFx}
+              onAudioFxChange={onAudioFxChange}
+              deinterlace={deinterlace}
+              onDeinterlaceToggle={onDeinterlaceToggle}
+              currentAudioDevice={audioDevice}
+              onAudioDeviceChange={onAudioDeviceChange}
+              loopMode={loopMode}
+              onLoopCycle={onLoopCycle}
+              playlistCount={playlistCount}
+              onPlaylistToggle={onPlaylistToggle}
+              onScreenshot={onScreenshot}
+              abLoopActive={abLoopActive}
+              onAbLoopCycle={onAbLoopCycle}
+              alwaysOnTop={alwaysOnTop}
+              onAlwaysOnTopToggle={onAlwaysOnTopToggle}
+              onJumpToTime={onJumpToTime}
+              onMediaInfo={onMediaInfo}
+              onSourceLocal={onSourceLocal}
+              onSourceNetwork={onSourceNetwork}
+              onSourceRecent={onSourceRecent}
+              onOpenSettings={onOpenSettings}
+              appearance={appearance}
+              onAppearanceChange={onAppearanceChange}
+              theme={theme}
+              onThemeChange={onThemeChange}
+            />
+          </Suspense>
+        )}
       </div>
     </>
   ), [volume, isMuted, isFullscreen, settingsOpen, onMuteToggle, onVolumeChange,

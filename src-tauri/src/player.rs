@@ -295,6 +295,11 @@ impl Player {
             // hold hundreds of MiB on 4K HDR content.
             set_opt_optional(handle, "vd-queue-max-bytes", "64MiB");
 
+            set_opt_optional(handle, "hr-seek", "yes");
+            set_opt_optional(handle, "hr-seek-framedrop", "yes");
+            set_opt_optional(handle, "demuxer-readahead-secs", "1.0");
+            set_opt_optional(handle, "vd-lavc-threads", "0");
+
             // Network playback via libavformat (http/https/rtsp/rtmp/mms).
             // ytdl_hook disabled — we don't bundle yt-dlp.
             set_opt_optional(handle, "ytdl", "no");

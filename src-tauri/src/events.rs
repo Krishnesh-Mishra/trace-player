@@ -42,60 +42,77 @@ pub struct HdrInfo {
     pub matrix: String,
 }
 
+const OBSERVERS: &[(&str, std::os::raw::c_int, u64)] = &[
+    ("time-pos", MPV_FORMAT_DOUBLE, TAG_TIME_POS),
+    ("duration", MPV_FORMAT_DOUBLE, TAG_DURATION),
+    ("pause", MPV_FORMAT_FLAG, TAG_PAUSE),
+    ("volume", MPV_FORMAT_DOUBLE, TAG_VOLUME),
+    ("speed", MPV_FORMAT_DOUBLE, TAG_SPEED),
+    ("seekable", MPV_FORMAT_FLAG, TAG_SEEKABLE),
+    ("core-idle", MPV_FORMAT_FLAG, TAG_CORE_IDLE),
+    ("idle-active", MPV_FORMAT_FLAG, TAG_IDLE_ACTIVE),
+    ("track-list", MPV_FORMAT_NONE, TAG_TRACKS),
+    ("chapter-list", MPV_FORMAT_NONE, TAG_CHAPTERS),
+    ("playlist", MPV_FORMAT_NONE, TAG_PLAYLIST),
+    ("playlist-pos", MPV_FORMAT_NONE, TAG_PLAYLIST_POS),
+    ("paused-for-cache", MPV_FORMAT_FLAG, TAG_PAUSED_FOR_CACHE),
+    // Fires whenever the cache fill level changes while mpv is stalled.
+    // -1 = not buffering; 0-100 = percent filled. Hitting 100 means mpv
+    // is about to resume; the frontend uses this as the "ready to play"
+    // progress bar instead of the misleading total-download percentage.
+    (
+        "cache-buffering-state",
+        MPV_FORMAT_NONE,
+        TAG_CACHE_BUFFERING,
+    ),
+    // Fires once per rendered frame at the VO. Only change that matters is
+    // that a new frame was displayed — we never read the property value,
+    // MPV_FORMAT_NONE is enough.
+    ("video-frame-info", MPV_FORMAT_NONE, TAG_VIDEO_FRAME),
+];
+
+// Forwarded to the Rust event loop as `script-message ui-wake`. Registered
+// off the startup critical path inside the wait_event thread — mpv accepts
+// keybinds any time before the user issues input.
+const UI_WAKE_KEYS: &[&str] = &[
+    "MOUSE_MOVE",
+    "MBTN_LEFT",
+    "MBTN_LEFT_DBL",
+    "MBTN_RIGHT",
+    "MBTN_MID",
+    "WHEEL_UP",
+    "WHEEL_DOWN",
+];
+
 pub fn start_event_loop(
     app: AppHandle,
     player: Arc<Player>,
     agc: Arc<AgcController>,
     ui: Arc<UiController>,
 ) {
-    let observers: &[(&str, std::os::raw::c_int, u64)] = &[
-        ("time-pos", MPV_FORMAT_DOUBLE, TAG_TIME_POS),
-        ("duration", MPV_FORMAT_DOUBLE, TAG_DURATION),
-        ("pause", MPV_FORMAT_FLAG, TAG_PAUSE),
-        ("volume", MPV_FORMAT_DOUBLE, TAG_VOLUME),
-        ("speed", MPV_FORMAT_DOUBLE, TAG_SPEED),
-        ("seekable", MPV_FORMAT_FLAG, TAG_SEEKABLE),
-        ("core-idle", MPV_FORMAT_FLAG, TAG_CORE_IDLE),
-        ("idle-active", MPV_FORMAT_FLAG, TAG_IDLE_ACTIVE),
-        ("track-list", MPV_FORMAT_NONE, TAG_TRACKS),
-        ("chapter-list", MPV_FORMAT_NONE, TAG_CHAPTERS),
-        ("playlist", MPV_FORMAT_NONE, TAG_PLAYLIST),
-        ("playlist-pos", MPV_FORMAT_NONE, TAG_PLAYLIST_POS),
-        ("paused-for-cache", MPV_FORMAT_FLAG, TAG_PAUSED_FOR_CACHE),
-        // Fires whenever the cache fill level changes while mpv is stalled.
-        // -1 = not buffering; 0-100 = percent filled. Hitting 100 means mpv
-        // is about to resume; the frontend uses this as the "ready to play"
-        // progress bar instead of the misleading total-download percentage.
-        (
-            "cache-buffering-state",
-            MPV_FORMAT_NONE,
-            TAG_CACHE_BUFFERING,
-        ),
-        // Fires once per rendered frame at the VO. Only change that matters is
-        // that a new frame was displayed — we never read the property value,
-        // MPV_FORMAT_NONE is enough.
-        ("video-frame-info", MPV_FORMAT_NONE, TAG_VIDEO_FRAME),
-    ];
-
-    for (name, fmt, tag) in observers {
-        if let Err(e) = player.observe_property(name, *fmt, *tag) {
-            crate::np_err!("events", "observe_property({name}) failed: {e}");
-        }
-    }
-    // Pull mpv's internal log stream into our logger so libavformat/HTTP/
-    // TLS/codec errors are visible in the dev console. "warn" balances
-    // signal vs noise — "info" floods on every load, "error" is too quiet
-    // for diagnosing why a network URL failed.
-    if let Err(e) = player.request_log_messages("warn") {
-        crate::np_err!("events", "request_log_messages failed: {e}");
-    }
-    crate::np_info!(
-        "events",
-        "event loop starting, observing {} properties",
-        observers.len()
-    );
-
     thread::spawn(move || {
+        for key in UI_WAKE_KEYS {
+            let _ = player.command(&["keybind", key, "script-message ui-wake"]);
+        }
+
+        for (name, fmt, tag) in OBSERVERS {
+            if let Err(e) = player.observe_property(name, *fmt, *tag) {
+                crate::np_err!("events", "observe_property({name}) failed: {e}");
+            }
+        }
+        // Pull mpv's internal log stream into our logger so libavformat/HTTP/
+        // TLS/codec errors are visible in the dev console. "warn" balances
+        // signal vs noise — "info" floods on every load, "error" is too quiet
+        // for diagnosing why a network URL failed.
+        if let Err(e) = player.request_log_messages("warn") {
+            crate::np_err!("events", "request_log_messages failed: {e}");
+        }
+        crate::np_info!(
+            "events",
+            "event loop starting, observing {} properties",
+            OBSERVERS.len()
+        );
+
         // Armed ONLY when paused-for-cache transitions false (cache refilled).
         // NOT armed on PLAYBACK_RESTART — that event fires multiple spurious
         // times after a seek (seek-ack, internal pipeline flush, etc.) long

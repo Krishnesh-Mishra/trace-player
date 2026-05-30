@@ -29,7 +29,10 @@ const DLL_NAME: &str = "libmpv-2.dll";
 /// start splash. With the installer-based model this should always be
 /// false on a normal launch.
 pub fn needs_extraction() -> bool {
-    locate().is_none()
+    let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) else {
+        return true;
+    };
+    !dir.join("bin").join(DLL_NAME).is_file()
 }
 
 /// Resolve the DLL path and `LoadLibraryW` it. The returned `PathBuf` is

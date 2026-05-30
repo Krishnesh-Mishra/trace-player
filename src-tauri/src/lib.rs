@@ -195,9 +195,87 @@ fn is_supported_source(s: &str) -> bool {
     )
 }
 
-/// Stub for lite build — the shell-extension thumbnail CLI is not supported here.
+/// Headless CLI handler for the Windows Shell extension. Invoked as
+/// `trace-player.exe --thumbnail-gen <video_path>`. Initializes the
+/// thumbnailer mpv, writes the middle-frame JPG to the shared
+/// `library-thumbs` cache (so the shell extension's IThumbnailProvider
+/// can pick it up on the next Explorer paint), and exits. No window,
+/// no event loop.
+///
+/// Returns `Some(exit_code)` when the CLI flag was consumed; the caller
+/// should `std::process::exit(code)`. Returns `None` when the flag is
+/// absent so `run()` proceeds with the normal Tauri startup.
 pub fn handle_cli() -> Option<i32> {
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 1usize;
+    while i < args.len() {
+        if args[i] == "--thumbnail-gen" {
+            let video_path = match args.get(i + 1) {
+                Some(p) => p.clone(),
+                None => {
+                    eprintln!("--thumbnail-gen requires a path argument");
+                    return Some(2);
+                }
+            };
+            return Some(run_thumbnail_gen(&video_path));
+        }
+        i += 1;
+    }
     None
+}
+
+fn run_thumbnail_gen(video_path: &str) -> i32 {
+    #[cfg(all(target_os = "windows", target_env = "msvc"))]
+    if let Err(e) = dll_bootstrap::extract_and_preload() {
+        eprintln!("libmpv preload failed: {e}");
+        return 3;
+    }
+
+    let thumbnailer = match Player::new_thumbnailer() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("thumbnailer init failed: {e}");
+            return 4;
+        }
+    };
+
+    // Mirror the cache scheme the shell-extension DLL reads in
+    // `cache_path_for`: `%APPDATA%\com.krishnesh.traceplayer\library-thumbs\
+    // {hex(sha1(path)[..10])}.jpg`. Both callers must use std::env::var_os
+    // so we don't drift from the DLL's path resolution.
+    let appdata = match std::env::var_os("APPDATA") {
+        Some(v) => std::path::PathBuf::from(v),
+        None => {
+            eprintln!("APPDATA not set");
+            return 5;
+        }
+    };
+    let dir = appdata
+        .join("com.krishnesh.traceplayer")
+        .join("library-thumbs");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("create thumb dir: {e}");
+        return 6;
+    }
+
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(video_path.as_bytes());
+    let digest = hasher.finalize();
+    let hash = hex::encode(&digest[..10]);
+    let dest = dir.join(format!("{hash}.jpg"));
+
+    if dest.exists() {
+        return 0;
+    }
+
+    match thumbnailer::generate_persistent_thumb(&thumbnailer, video_path, &dest) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("generate thumb: {e}");
+            7
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -294,27 +372,37 @@ pub fn run() {
             // happens on the deferred thread below.
             let shader_cands = shader_candidates(app);
 
-            // Critical path — must complete before window.show() so mpv has
-            // a render target and the event loop is up to receive events
-            // the frontend will subscribe to.
+            // Attach mpv first so it owns a render target before the window
+            // is shown. Keybinds and observe_property registration are moved
+            // into start_event_loop's spawned thread (see events.rs) to keep
+            // them off the show() critical path.
             if let Some(ref player) = player_for_setup {
                 attach_mpv_to_window(player, &window);
+            }
 
-                // Forward mouse + wheel events from mpv into the Rust event
-                // loop as `script-message ui-wake`. Must be set before any
-                // input could arrive.
-                for key in &[
-                    "MOUSE_MOVE",
-                    "MBTN_LEFT",
-                    "MBTN_LEFT_DBL",
-                    "MBTN_RIGHT",
-                    "MBTN_MID",
-                    "WHEEL_UP",
-                    "WHEEL_DOWN",
-                ] {
-                    let _ = player.command(&["keybind", key, "script-message ui-wake"]);
-                }
+            // Paint the parent HWND black BEFORE show() so the first frame is
+            // not the Tauri-transparent flash showing through the desktop.
+            #[cfg(target_os = "windows")]
+            let parent_hwnd_opt = {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                window.window_handle().ok().and_then(|h| match h.as_raw() {
+                    RawWindowHandle::Win32(w) => Some(w.hwnd.get()),
+                    _ => None,
+                })
+            };
+            #[cfg(target_os = "windows")]
+            if let Some(hwnd) = parent_hwnd_opt {
+                set_window_black_background(hwnd);
+            }
 
+            let _ = window.show();
+            let _ = window.set_focus();
+            #[cfg(all(target_os = "windows", target_env = "msvc"))]
+            if let Some(s) = splash_handle {
+                s.close();
+            }
+
+            if let Some(ref player) = player_for_setup {
                 events::start_event_loop(
                     app.handle().clone(),
                     player.clone(),
@@ -338,17 +426,6 @@ pub fn run() {
                     .map(|mut g| *g = Some(path));
             }
 
-            // Show the window NOW so first paint happens as soon as possible.
-            // Everything below this point runs while the user is already
-            // looking at the player — no longer blocks the splash → window
-            // handoff.
-            let _ = window.show();
-            let _ = window.set_focus();
-            #[cfg(all(target_os = "windows", target_env = "msvc"))]
-            if let Some(s) = splash_handle {
-                s.close();
-            }
-
             // Deferred non-critical setup. WebView HWND lookup, SMTC,
             // taskbar thumb-bar, and power-state polling can all happen
             // after first paint — they're background services that don't
@@ -358,6 +435,8 @@ pub fn run() {
                 let app_for_power = app.handle().clone();
                 let perf_for_react = perf_for_power.clone();
                 let player_for_power = player.clone();
+                #[cfg(target_os = "windows")]
+                let parent_hwnd_for_deferred = parent_hwnd_opt;
                 std::thread::spawn(move || {
                     // Resolve the shader directory on this background
                     // thread — file existence checks would otherwise sit on
@@ -371,20 +450,15 @@ pub fn run() {
 
                     #[cfg(target_os = "windows")]
                     {
-                        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-                        if let Ok(handle) = window_for_deferred.window_handle() {
-                            if let RawWindowHandle::Win32(h) = handle.as_raw() {
-                                let parent_hwnd = h.hwnd.get();
-                                set_window_black_background(parent_hwnd);
-                                if let Some(wv) = ui_visibility::find_webview(parent_hwnd) {
-                                    np_info!("ui", "found WebView2 HWND {:#x}", wv);
-                                    ui_for_setup.set_webview_hwnd(wv);
-                                } else {
-                                    np_warn!(
-                                        "ui",
-                                        "WebView2 HWND not found — dormancy will be JS-only"
-                                    );
-                                }
+                        if let Some(parent_hwnd) = parent_hwnd_for_deferred {
+                            if let Some(wv) = ui_visibility::find_webview(parent_hwnd) {
+                                np_info!("ui", "found WebView2 HWND {:#x}", wv);
+                                ui_for_setup.set_webview_hwnd(wv);
+                            } else {
+                                np_warn!(
+                                    "ui",
+                                    "WebView2 HWND not found — dormancy will be JS-only"
+                                );
                             }
                         }
                         install_windows_integrations(&window_for_deferred, player.clone());

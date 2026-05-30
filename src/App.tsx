@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, lazy, Suspense, type MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -29,25 +29,25 @@ import ControlBar, {
   DEFAULT_AUDIO_FX,
   DEFAULT_APPEARANCE,
 } from "./components/ControlBar";
-import JumpToTimeDialog from "./components/JumpToTimeDialog";
-import MediaInfoDialog from "./components/MediaInfoDialog";
-import OpenSourceDialog from "./components/OpenSourceDialog";
 import LoadingSourceOverlay from "./components/LoadingSourceOverlay";
 import BufferingBanner from "./components/BufferingBanner";
-import RecentSourcesPanel from "./components/RecentSourcesPanel";
 import { DENSE_LRU_MAX, denseBucket } from "./components/types";
 import { useTheme } from "./hooks/useTheme";
 import { log } from "./lib/log";
 
-import SubtitleSettingsPanel, {
+import {
   type SubtitleStyle,
   DEFAULT_SUBTITLE_STYLE,
 } from "./components/SubtitleSettingsPanel";
-import DevTester from "./components/DevTester";
+const JumpToTimeDialog = lazy(() => import("./components/JumpToTimeDialog"));
+const MediaInfoDialog = lazy(() => import("./components/MediaInfoDialog"));
+const OpenSourceDialog = lazy(() => import("./components/OpenSourceDialog"));
+const RecentSourcesPanel = lazy(() => import("./components/RecentSourcesPanel"));
+const SubtitleSettingsPanel = lazy(() => import("./components/SubtitleSettingsPanel"));
+const LazyDevTester = import.meta.env.DEV ? lazy(() => import("./components/DevTester")) : null;
 import GestureLayer from "./components/GestureLayer";
 import PipBar from "./components/PipBar";
 import AppContextMenu from "./components/AppContextMenu";
-import Database from "@tauri-apps/plugin-sql";
 
 /** Lightweight error logger for .catch() handlers on user-facing operations. */
 const logErr = (ctx: string) => (e: unknown) => console.warn(`[TracePlayer] ${ctx}:`, e);
@@ -61,9 +61,15 @@ export interface WatchHistoryEntry {
   played_at: number;
 }
 
-let _dbPromise: ReturnType<typeof Database.load> | null = null;
-function getDb() {
-  if (!_dbPromise) _dbPromise = Database.load("sqlite:library.db");
+type LazyDatabase = InstanceType<(typeof import("@tauri-apps/plugin-sql"))["default"]>;
+let _dbPromise: Promise<LazyDatabase> | null = null;
+function getDb(): Promise<LazyDatabase> {
+  if (!_dbPromise) {
+    _dbPromise = (async () => {
+      const { default: Database } = await import("@tauri-apps/plugin-sql");
+      return Database.load("sqlite:library.db");
+    })();
+  }
   return _dbPromise;
 }
 
@@ -213,6 +219,7 @@ export default function App() {
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dormancyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDormantRef = useRef(false);
+  const lastMouseRef = useRef<{ x: number; y: number; t: number }>({ x: 0, y: 0, t: 0 });
   const seekTargetRef = useRef<number | null>(null);
   const durationRef = useRef(0);
   const isPlayingRef = useRef(false);
@@ -737,85 +744,114 @@ export default function App() {
         const s = await Store.load("trace-player-settings.json");
         if (cancelled) return;
         storeRef.current = s;
-        const savedStyle = await s.get<SubtitleStyle>("subtitleStyle");
-        if (savedStyle && !cancelled) setSubtitleStyle(savedStyle);
-        const savedDelay = await s.get<number>("subtitleDelay");
-        if (typeof savedDelay === "number" && !cancelled) setSubtitleDelay(savedDelay);
-        const savedImage = await s.get<ImageParams>("imageParams");
-        if (savedImage && !cancelled) setImageParams(savedImage);
-        const savedVideo = await s.get<VideoState>("videoState");
-        if (savedVideo && !cancelled) setVideoState(savedVideo);
-        const savedPerf = await s.get<PerfProfileName>("perfProfile");
-        if (savedPerf && !cancelled) setPerfProfile(savedPerf);
-        const savedHdr = await s.get<HdrMode>("hdrMode");
-        if (savedHdr && !cancelled) setHdrMode(savedHdr);
-        const savedUp = await s.get<UpscalingProfile>("upscaling");
-        if (savedUp && !cancelled) setUpscaling(savedUp);
-        const savedInterp = await s.get<InterpolationMode>("interpolation");
-        if (savedInterp && !cancelled) setInterpolation(savedInterp);
-        const savedVsync = await s.get<boolean>("vsync");
-        if (typeof savedVsync === "boolean" && !cancelled) setVsync(savedVsync);
-        const savedExFs = await s.get<boolean>("exclusiveFullscreen");
-        if (typeof savedExFs === "boolean" && !cancelled) setExclusiveFullscreen(savedExFs);
-        const savedFx = await s.get<Partial<AudioFxState>>("audioFx");
-        if (savedFx && !cancelled) {
+        const [
+          savedStyle,
+          savedDelay,
+          savedImage,
+          savedVideo,
+          savedPerf,
+          savedHdr,
+          savedUp,
+          savedInterp,
+          savedVsync,
+          savedExFs,
+          savedFx,
+          savedAppearance,
+          savedLoop,
+          savedDir,
+          savedDeinterlace,
+          savedAlwaysOnTop,
+          savedAudioDevice,
+          legacyRecent,
+          savedPip,
+          savedCacheLimit,
+        ] = await Promise.all([
+          s.get<SubtitleStyle>("subtitleStyle"),
+          s.get<number>("subtitleDelay"),
+          s.get<ImageParams>("imageParams"),
+          s.get<VideoState>("videoState"),
+          s.get<PerfProfileName>("perfProfile"),
+          s.get<HdrMode>("hdrMode"),
+          s.get<UpscalingProfile>("upscaling"),
+          s.get<InterpolationMode>("interpolation"),
+          s.get<boolean>("vsync"),
+          s.get<boolean>("exclusiveFullscreen"),
+          s.get<Partial<AudioFxState>>("audioFx"),
+          s.get<AppearanceState>("appearance"),
+          s.get<LoopMode>("loopMode"),
+          s.get<string>("screenshotDir"),
+          s.get<boolean>("deinterlace"),
+          s.get<boolean>("alwaysOnTop"),
+          s.get<string>("audioDevice"),
+          s.get<string[]>("recentFiles"),
+          s.get<boolean>("pipMode"),
+          s.get<number>("torrentCacheLimitBytes"),
+        ]);
+        if (cancelled) return;
+        if (savedStyle) setSubtitleStyle(savedStyle);
+        if (typeof savedDelay === "number") setSubtitleDelay(savedDelay);
+        if (savedImage) setImageParams(savedImage);
+        if (savedVideo) setVideoState(savedVideo);
+        if (savedPerf) setPerfProfile(savedPerf);
+        if (savedHdr) setHdrMode(savedHdr);
+        if (savedUp) setUpscaling(savedUp);
+        if (savedInterp) setInterpolation(savedInterp);
+        if (typeof savedVsync === "boolean") setVsync(savedVsync);
+        if (typeof savedExFs === "boolean") setExclusiveFullscreen(savedExFs);
+        if (savedFx) {
           // Merge with defaults so older stores (no `eq`) don't render as undefined.
           setAudioFx({ ...DEFAULT_AUDIO_FX, ...savedFx, eq: { ...DEFAULT_AUDIO_FX.eq, ...(savedFx.eq ?? {}) } });
         }
-        const savedAppearance = await s.get<AppearanceState>("appearance");
-        if (savedAppearance && !cancelled) setAppearance(savedAppearance);
-        const savedLoop = await s.get<LoopMode>("loopMode");
-        if (savedLoop && !cancelled) setLoopMode(savedLoop);
-        const savedDir = await s.get<string>("screenshotDir");
-        if (savedDir && !cancelled) {
+        if (savedAppearance) setAppearance(savedAppearance);
+        if (savedLoop) setLoopMode(savedLoop);
+        if (savedDir) {
           setScreenshotDir(savedDir);
           invoke("set_screenshot_dir", { path: savedDir }).catch(() => {});
         }
-        const savedDeinterlace = await s.get<boolean>("deinterlace");
-        if (typeof savedDeinterlace === "boolean" && !cancelled) setDeinterlace(savedDeinterlace);
-        const savedAlwaysOnTop = await s.get<boolean>("alwaysOnTop");
-        if (savedAlwaysOnTop && !cancelled) {
+        if (typeof savedDeinterlace === "boolean") setDeinterlace(savedDeinterlace);
+        if (savedAlwaysOnTop) {
           setAlwaysOnTop(true);
           getCurrentWindow().setAlwaysOnTop(true).catch(() => {});
         }
-        const savedAudioDevice = await s.get<string>("audioDevice");
-        if (savedAudioDevice && !cancelled) {
+        if (savedAudioDevice) {
           setAudioDevice(savedAudioDevice);
           invoke("set_audio_device", { name: savedAudioDevice }).catch(() => {});
         }
-        // Migrate legacy recentFiles from store → watch_history SQL table
-        const legacyRecent = await s.get<string[]>("recentFiles");
-        if (legacyRecent && legacyRecent.length > 0) {
-          const db = await getDb();
-          for (const p of legacyRecent) {
-            await db.execute(
-              `INSERT INTO watch_history (path, played_at) VALUES ($1, strftime('%s','now'))
-               ON CONFLICT(path) DO NOTHING`,
-              [p]
-            ).catch(() => {});
-          }
-          await s.delete("recentFiles");
-          await s.delete("subtitleMap");
-          saveStore();
-        }
-        // Load watch history from SQL
-        if (!cancelled) {
-          const db = await getDb();
-          const rows = await db.select<WatchHistoryEntry[]>(
-            "SELECT * FROM watch_history ORDER BY played_at DESC LIMIT 50"
-          );
-          setWatchHistory(rows);
-        }
-        const savedPip = await s.get<boolean>("pipMode");
-        if (savedPip && !cancelled) {
+        if (savedPip) {
           setPipMode(true);
           invoke("enter_pip").catch(() => {});
         }
-        const savedCacheLimit = await s.get<number>("torrentCacheLimitBytes");
-        if (typeof savedCacheLimit === "number" && savedCacheLimit > 0 && !cancelled) {
+        if (typeof savedCacheLimit === "number" && savedCacheLimit > 0) {
           invoke("set_torrent_cache_limit", { bytes: savedCacheLimit }).catch(() => {});
         }
-        // (cookies/quality settings removed — yt-dlp support dropped)
+        // Defer non-critical post-load work until the browser is idle so it
+        // doesn't compete with first paint.
+        const ric: (cb: () => void) => void =
+          (window as any).requestIdleCallback ?? ((cb: () => void) => setTimeout(cb, 1));
+        ric(() => {
+          if (cancelled) return;
+          (async () => {
+            if (legacyRecent && legacyRecent.length > 0) {
+              const db = await getDb();
+              for (const p of legacyRecent) {
+                await db.execute(
+                  `INSERT INTO watch_history (path, played_at) VALUES ($1, strftime('%s','now'))
+                   ON CONFLICT(path) DO NOTHING`,
+                  [p]
+                ).catch(() => {});
+              }
+              await s.delete("recentFiles");
+              await s.delete("subtitleMap");
+              saveStore();
+            }
+            if (cancelled) return;
+            const db = await getDb();
+            const rows = await db.select<WatchHistoryEntry[]>(
+              "SELECT * FROM watch_history ORDER BY played_at DESC LIMIT 50"
+            );
+            if (!cancelled) setWatchHistory(rows);
+          })().catch(() => {});
+        });
       } catch (e) {
         console.warn("[TracePlayer] settings store failed to load:", e);
       } finally {
@@ -1006,7 +1042,18 @@ export default function App() {
     }
   }, [subtitlePanelOpen, scheduleHide, clearHideTimer]);
 
-  const handleMouseMove = useCallback(() => {
+  const handleMouseMove = useCallback((e: ReactMouseEvent) => {
+    if (isDormantRef.current) {
+      const { x, y, t } = lastMouseRef.current;
+      const now = performance.now();
+      const dx = e.clientX - x;
+      const dy = e.clientY - y;
+      if (dx * dx + dy * dy >= 4 && now - t >= 150) {
+        lastMouseRef.current = { x: e.clientX, y: e.clientY, t: now };
+        isDormantRef.current = false;
+        invoke("ui_wake").catch(() => {});
+      }
+    }
     setShowControls(true);
     scheduleHide();
   }, [scheduleHide]);
@@ -2175,72 +2222,90 @@ export default function App() {
       </AnimatePresence>
 
       {/* Subtitle settings — slides in from the right */}
-      <SubtitleSettingsPanel
-        open={subtitlePanelOpen}
-        onClose={() => setSubtitlePanelOpen(false)}
-        style={subtitleStyle}
-        delayMs={subtitleDelay}
-        onStyleChange={handleSubtitleStyleChange}
-        onDelayChange={handleSubtitleDelayChange}
-        onLoadSubtitle={handleLoadSubtitle}
-      />
+      {subtitlePanelOpen && (
+        <Suspense fallback={null}>
+          <SubtitleSettingsPanel
+            open={subtitlePanelOpen}
+            onClose={() => setSubtitlePanelOpen(false)}
+            style={subtitleStyle}
+            delayMs={subtitleDelay}
+            onStyleChange={handleSubtitleStyleChange}
+            onDelayChange={handleSubtitleDelayChange}
+            onLoadSubtitle={handleLoadSubtitle}
+          />
+        </Suspense>
+      )}
 
-      {/* Playlist is now embedded in LibraryModal as a right-side panel */}
+      {openSourceOpen && (
+        <Suspense fallback={null}>
+          <OpenSourceDialog
+            open={openSourceOpen}
+            onSubmit={handleOpenSource}
+            onClose={() => setOpenSourceOpen(false)}
+          />
+        </Suspense>
+      )}
 
-      <OpenSourceDialog
-        open={openSourceOpen}
-        onSubmit={handleOpenSource}
-        onClose={() => setOpenSourceOpen(false)}
-      />
-
-      <RecentSourcesPanel
-        open={recentPanelOpen}
-        recents={watchHistory}
-        onPick={(p) => {
-          const lower = p.toLowerCase();
-          if (
-            lower.startsWith("http://") ||
-            lower.startsWith("https://") ||
-            lower.startsWith("rtsp://") ||
-            lower.startsWith("rtmp://") ||
-            lower.startsWith("rtmps://") ||
-            lower.startsWith("mms://") ||
-            lower.startsWith("magnet:")
-          ) {
-            void handleOpenSource(p, false);
-          } else {
-            void loadPath(p);
-          }
-        }}
-        onClear={async () => {
-          const db = await getDb();
-          await db.execute("DELETE FROM watch_history");
-          setWatchHistory([]);
-        }}
-        onRemove={removeFromWatchHistory}
-        onClose={() => setRecentPanelOpen(false)}
-      />
+      {recentPanelOpen && (
+        <Suspense fallback={null}>
+          <RecentSourcesPanel
+            open={recentPanelOpen}
+            recents={watchHistory}
+            onPick={(p) => {
+              const lower = p.toLowerCase();
+              if (
+                lower.startsWith("http://") ||
+                lower.startsWith("https://") ||
+                lower.startsWith("rtsp://") ||
+                lower.startsWith("rtmp://") ||
+                lower.startsWith("rtmps://") ||
+                lower.startsWith("mms://") ||
+                lower.startsWith("magnet:")
+              ) {
+                void handleOpenSource(p, false);
+              } else {
+                void loadPath(p);
+              }
+            }}
+            onClear={async () => {
+              const db = await getDb();
+              await db.execute("DELETE FROM watch_history");
+              setWatchHistory([]);
+            }}
+            onRemove={removeFromWatchHistory}
+            onClose={() => setRecentPanelOpen(false)}
+          />
+        </Suspense>
+      )}
 
 
       {/* Jump to time dialog */}
-      <JumpToTimeDialog
-        open={jumpToTimeOpen}
-        duration={duration}
-        onSeek={(s) => {
-          seekTargetRef.current = s;
-          currentTimeRef.current = s;
-          setDisplayTime(s);
-          if (duration > 0) progressRef.current = (s / duration) * 100;
-          invoke("seek", { seconds: s, mode: "absolute" }).catch(logErr("seek"));
-        }}
-        onClose={() => setJumpToTimeOpen(false)}
-      />
+      {jumpToTimeOpen && (
+        <Suspense fallback={null}>
+          <JumpToTimeDialog
+            open={jumpToTimeOpen}
+            duration={duration}
+            onSeek={(s) => {
+              seekTargetRef.current = s;
+              currentTimeRef.current = s;
+              setDisplayTime(s);
+              if (duration > 0) progressRef.current = (s / duration) * 100;
+              invoke("seek", { seconds: s, mode: "absolute" }).catch(logErr("seek"));
+            }}
+            onClose={() => setJumpToTimeOpen(false)}
+          />
+        </Suspense>
+      )}
 
       {/* Media info dialog */}
-      <MediaInfoDialog
-        open={mediaInfoOpen}
-        onClose={() => setMediaInfoOpen(false)}
-      />
+      {mediaInfoOpen && (
+        <Suspense fallback={null}>
+          <MediaInfoDialog
+            open={mediaInfoOpen}
+            onClose={() => setMediaInfoOpen(false)}
+          />
+        </Suspense>
+      )}
 
       {/* Drag-over overlay */}
       <AnimatePresence>
@@ -2285,7 +2350,11 @@ export default function App() {
       />
 
       {/* Dev-only: command tester (only mounted in `npm run dev`) */}
-      {import.meta.env.DEV && <DevTester />}
+      {import.meta.env.DEV && LazyDevTester && (
+        <Suspense fallback={null}>
+          <LazyDevTester />
+        </Suspense>
+      )}
     </div>
   );
 }
