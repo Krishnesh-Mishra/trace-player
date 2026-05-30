@@ -38,6 +38,9 @@ import VideoSourcePage from "./VideoSourcePage";
 import VideoAppearancePage from "./VideoAppearancePage";
 import VideoQualityPage from "./VideoQualityPage";
 import AppearancePage from "./SettingsPage";
+import AppearanceThemePage from "./AppearanceThemePage";
+import AppearanceBarSizePage from "./AppearanceBarSizePage";
+import AppearanceSeekBarPage from "./AppearanceSeekBarPage";
 
 interface Props {
   open: boolean;
@@ -195,12 +198,42 @@ export default function SettingsMenu(props: Props) {
               <AppearancePage
                 direction={direction}
                 appearance={props.appearance}
-                onAppearanceChange={props.onAppearanceChange}
                 theme={props.theme}
-                onThemeChange={props.onThemeChange}
                 alwaysOnTop={props.alwaysOnTop}
+                onNavigate={goTo}
                 onAlwaysOnTopToggle={props.onAlwaysOnTopToggle}
                 onBack={() => goBackTo("main")}
+              />
+            )}
+            {page === "appearance_theme" && (
+              <AppearanceThemePage
+                direction={direction}
+                theme={props.theme}
+                onChange={props.onThemeChange}
+                onBack={() => goBackTo("appearance")}
+              />
+            )}
+            {page === "appearance_bar_size" && (
+              <AppearanceBarSizePage
+                direction={direction}
+                barSize={props.appearance.barSize}
+                onChange={(b) =>
+                  props.onAppearanceChange({ ...props.appearance, barSize: b })
+                }
+                onBack={() => goBackTo("appearance")}
+              />
+            )}
+            {page === "appearance_seek_bar_size" && (
+              <AppearanceSeekBarPage
+                direction={direction}
+                seekBarSize={props.appearance.seekBarSize}
+                onChange={(s) =>
+                  props.onAppearanceChange({
+                    ...props.appearance,
+                    seekBarSize: s,
+                  })
+                }
+                onBack={() => goBackTo("appearance")}
               />
             )}
             {page === "performance" && (

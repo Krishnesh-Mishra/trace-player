@@ -69,7 +69,10 @@ export type SettingsPage =
   | "video_interp"
   | "video_source"
   | "performance"
-  | "appearance";
+  | "appearance"
+  | "appearance_theme"
+  | "appearance_bar_size"
+  | "appearance_seek_bar_size";
 
 
 /** Archive extensions that map to the lazy-extract playlist flow. */
