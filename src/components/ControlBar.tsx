@@ -19,6 +19,7 @@ import VolumeControl from "./controls/VolumeControl";
 import PlaybackButtons from "./controls/PlaybackButtons";
 import SettingsMenu from "./controls/settings/SettingsMenu";
 import { fmtTime } from "./types";
+import type { ThemeChoice } from "../hooks/useTheme";
 
 // Re-exports so existing import paths in App.tsx keep working.
 export type {
@@ -117,6 +118,9 @@ interface ControlBarProps {
   onMediaInfo: () => void;
   onJumpToTime: () => void;
   onOpenSettings: () => void;
+  theme: ThemeChoice;
+  onThemeChange: (t: ThemeChoice) => void;
+  onAppearanceChange: (a: AppearanceState) => void;
   onFrameStep: (backward: boolean) => void;
   onLoopCycle: () => void;
   onPlaylistToggle: () => void;
@@ -223,6 +227,9 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
     onSourceRecent,
     onLibraryOpen,
     onOpenSettings,
+    theme,
+    onThemeChange,
+    onAppearanceChange,
     showThumbnails = true,
   } = props;
 
@@ -496,6 +503,10 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
           onSourceRecent={onSourceRecent}
           onLibraryOpen={onLibraryOpen}
           onOpenSettings={onOpenSettings}
+          appearance={appearance}
+          onAppearanceChange={onAppearanceChange}
+          theme={theme}
+          onThemeChange={onThemeChange}
         />
       </div>
     </>
@@ -514,7 +525,8 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
       loopMode, onLoopCycle, playlistCount, onPlaylistToggle, onScreenshot,
       abLoopActive, onAbLoopCycle, alwaysOnTop, onAlwaysOnTopToggle,
       onJumpToTime, onMediaInfo, onSourceLocal, onSourceNetwork, onSourceRecent,
-      onOpenSettings, barSize, btnSize, iconSize]);
+      onOpenSettings, theme, onThemeChange, onAppearanceChange,
+      barSize, btnSize, iconSize]);
 
   return (
     <motion.div

@@ -15,7 +15,9 @@ import type {
   AudioFxState,
   PipelineInfo,
   LoopMode,
+  AppearanceState,
 } from "../../types";
+import type { ThemeChoice } from "../../../hooks/useTheme";
 import MainPage from "./MainPage";
 import SpeedPage from "./SpeedPage";
 import AudioMainPage from "./AudioMainPage";
@@ -35,6 +37,7 @@ import AudioDevicePage from "./AudioDevicePage";
 import VideoSourcePage from "./VideoSourcePage";
 import VideoAppearancePage from "./VideoAppearancePage";
 import VideoQualityPage from "./VideoQualityPage";
+import AppearancePage from "./SettingsPage";
 
 interface Props {
   open: boolean;
@@ -95,6 +98,10 @@ interface Props {
   onSourceRecent: () => void;
   onLibraryOpen: () => void;
   onOpenSettings: () => void;
+  appearance: AppearanceState;
+  onAppearanceChange: (a: AppearanceState) => void;
+  theme: ThemeChoice;
+  onThemeChange: (t: ThemeChoice) => void;
 }
 
 export default function SettingsMenu(props: Props) {
@@ -182,7 +189,18 @@ export default function SettingsMenu(props: Props) {
                 onAlwaysOnTopToggle={props.onAlwaysOnTopToggle}
                 onJumpToTime={props.onJumpToTime}
                 onMediaInfo={props.onMediaInfo}
-                onOpenSettings={props.onOpenSettings}
+              />
+            )}
+            {page === "appearance" && (
+              <AppearancePage
+                direction={direction}
+                appearance={props.appearance}
+                onAppearanceChange={props.onAppearanceChange}
+                theme={props.theme}
+                onThemeChange={props.onThemeChange}
+                alwaysOnTop={props.alwaysOnTop}
+                onAlwaysOnTopToggle={props.onAlwaysOnTopToggle}
+                onBack={() => goBackTo("main")}
               />
             )}
             {page === "performance" && (

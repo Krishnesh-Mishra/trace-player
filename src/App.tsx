@@ -44,7 +44,6 @@ import SubtitleSettingsPanel, {
   DEFAULT_SUBTITLE_STYLE,
 } from "./components/SubtitleSettingsPanel";
 import DevTester from "./components/DevTester";
-import AppearancePanel from "./components/AppearancePanel";
 import GestureLayer from "./components/GestureLayer";
 import PipBar from "./components/PipBar";
 import AppContextMenu from "./components/AppContextMenu";
@@ -184,7 +183,6 @@ export default function App() {
   const [openSourceOpen, setOpenSourceOpen] = useState(false);
   const [recentPanelOpen, setRecentPanelOpen] = useState(false);
   const [initialCheckDone, setInitialCheckDone] = useState(false);
-  const [appearanceOpen, setAppearanceOpen] = useState(false);
   // Buffering visibility is owned by BufferingBanner (it listens to
   // mpv:paused-for-cache + mpv:torrent-stats itself), so App.tsx no longer
   // needs the bufferingForCache state — kept as a no-op here only because
@@ -247,8 +245,8 @@ export default function App() {
   useEffect(() => { isSeekingRef.current = isSeeking; }, [isSeeking]);
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
   useEffect(() => {
-    anyOverlayOpenRef.current = jumpToTimeOpen || mediaInfoOpen || openSourceOpen || recentPanelOpen || subtitlePanelOpen || appearanceOpen;
-  }, [jumpToTimeOpen, mediaInfoOpen, openSourceOpen, recentPanelOpen, subtitlePanelOpen, appearanceOpen]);
+    anyOverlayOpenRef.current = jumpToTimeOpen || mediaInfoOpen || openSourceOpen || recentPanelOpen || subtitlePanelOpen;
+  }, [jumpToTimeOpen, mediaInfoOpen, openSourceOpen, recentPanelOpen, subtitlePanelOpen]);
   useEffect(() => { isLocalFileRef.current = isLocalFile; }, [isLocalFile]);
   useEffect(() => { hoverPreviewRef.current = hoverPreview; }, [hoverPreview]);
 
@@ -1322,8 +1320,7 @@ export default function App() {
   }, []);
 
   const togglePlaylistPanel = useCallback(() => {
-    // Lite build: no playlist UI — toggle exposes appearance instead.
-    setAppearanceOpen((o) => !o);
+    // Lite build: no playlist UI — settings live inside the SettingsMenu.
   }, []);
 
   // ── keyboard shortcuts ──────────────────────────────────────────────────────
@@ -1851,7 +1848,7 @@ export default function App() {
   const openJumpToTime = useCallback(() => setJumpToTimeOpen(true), []);
   const openSourceNetwork = useCallback(() => setOpenSourceOpen(true), []);
   const openSourceRecent = useCallback(() => setRecentPanelOpen(true), []);
-  const openAppearance = useCallback(() => setAppearanceOpen(true), []);
+  const noop = useCallback(() => {}, []);
 
   return (
     <div
@@ -2168,8 +2165,11 @@ export default function App() {
             onSourceLocal={handleOpenFile}
             onSourceNetwork={openSourceNetwork}
             onSourceRecent={openSourceRecent}
-            onLibraryOpen={openAppearance}
-            onOpenSettings={openAppearance}
+            onLibraryOpen={noop}
+            onOpenSettings={noop}
+            theme={theme}
+            onThemeChange={setTheme}
+            onAppearanceChange={setAppearance}
             showThumbnails={isLocalFile && hoverPreview}
           />
         )}
@@ -2222,17 +2222,6 @@ export default function App() {
         onClose={() => setRecentPanelOpen(false)}
       />
 
-
-      <AppearancePanel
-        open={appearanceOpen}
-        onClose={() => setAppearanceOpen(false)}
-        appearance={appearance}
-        onAppearanceChange={setAppearance}
-        theme={theme}
-        onThemeChange={setTheme}
-        alwaysOnTop={alwaysOnTop}
-        onAlwaysOnTopToggle={handleAlwaysOnTopToggle}
-      />
 
       {/* Jump to time dialog */}
       <JumpToTimeDialog
@@ -2287,7 +2276,7 @@ export default function App() {
         subtitleTracks={subtitleTracks}
         selectedAudioId={selectedAudio}
         selectedSubId={selectedSub}
-        disabled={appearanceOpen || subtitlePanelOpen || jumpToTimeOpen || mediaInfoOpen || openSourceOpen || recentPanelOpen}
+        disabled={subtitlePanelOpen || jumpToTimeOpen || mediaInfoOpen || openSourceOpen || recentPanelOpen}
         onPlayPause={playPause}
         onSpeedChange={handleSpeedChange}
         onAudioTrackChange={handleAudioTrackChange}

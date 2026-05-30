@@ -6,7 +6,7 @@ import {
   Monitor,
   Gauge,
   Camera,
-  Palette,
+  Settings2,
   Repeat,
   Repeat1,
   Repeat2,
@@ -36,7 +36,6 @@ interface Props {
   onAlwaysOnTopToggle: () => void;
   onJumpToTime: () => void;
   onMediaInfo: () => void;
-  onOpenSettings: () => void;
 }
 
 const PERF_LABELS: Record<PerfProfileName, string> = {
@@ -102,7 +101,6 @@ export default function MainPage({
   onAlwaysOnTopToggle,
   onJumpToTime,
   onMediaInfo,
-  onOpenSettings,
 }: Props) {
   const LoopIcon = loopMode === "file" ? Repeat1 : Repeat;
   const loopActive = loopMode !== "off";
@@ -258,11 +256,11 @@ export default function MainPage({
           className="w-full flex items-center justify-between px-3 py-2.5
                      text-sm text-[var(--np-text)] rounded-lg hover:bg-[var(--np-hover)] cursor-pointer
                      transition-colors duration-100"
-          onClick={onOpenSettings}
+          onClick={() => onNavigate("appearance")}
         >
           <span className="flex items-center gap-2">
-            <Palette className="w-3.5 h-3.5 text-[var(--np-text-secondary)]" />
-            Appearance
+            <Settings2 className="w-3.5 h-3.5 text-[var(--np-text-secondary)]" />
+            Settings
           </span>
           <ChevronRight className="w-3.5 h-3.5 text-[var(--np-text-tertiary)]" />
         </button>
