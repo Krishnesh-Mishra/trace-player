@@ -4,14 +4,11 @@ use std::thread;
 
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
-use crate::commands::{
-    handle_archive_advance, handle_torrent_advance, parse_track_list, read_playlist,
-    try_recover_archive_load, try_recover_torrent_load,
-};
+use crate::commands::{parse_track_list, read_playlist};
 use crate::player::{MpvEvent, Player, MPV_FORMAT_DOUBLE, MPV_FORMAT_FLAG, MPV_FORMAT_NONE};
-use crate::state::{AgcController, AppState, UiController};
+use crate::state::{AgcController, UiController};
 
 const TAG_TIME_POS: u64 = 1;
 const TAG_DURATION: u64 = 2;
@@ -154,15 +151,6 @@ pub fn start_event_loop(
                     if let Some(paused) = player.get_property_flag("pause") {
                         let _ = app.emit("mpv:pause", paused);
                     }
-                    // Lazy-prefetch hook: if the new file is a torrent stream URL,
-                    // tell rqbit to widen its "wanted" window. No-op (and clears
-                    // the active marker) when the new file isn't a torrent.
-                    let st: tauri::State<'_, AppState> = app.state();
-                    handle_torrent_advance(st.inner(), &path);
-                    // Same idea for archives: if the new path is inside a
-                    // registered archive cache, kick the next-entry prefetch
-                    // and rotate the active-paths set.
-                    handle_archive_advance(st.inner(), &path);
                     if let Err(e) = app.emit("mpv:file-loaded", path) {
                         eprintln!("[events] emit failed: {e}");
                     }
@@ -174,28 +162,6 @@ pub fn start_event_loop(
                 MpvEvent::EndFile { reason, error } => {
                     crate::np_info!("events", "END_FILE reason={reason} error={error}");
                     let is_error = reason == crate::player::MPV_END_FILE_REASON_ERROR;
-                    // Archive recovery: if the failed path is inside a
-                    // registered archive cache, that means mpv tried to load an
-                    // entry we hadn't extracted yet (manual skip past the
-                    // prefetch window). Extract it off-thread and re-issue
-                    // loadfile so the user sees a brief stall, then playback —
-                    // not a hard error. Skip the auth-classification toast
-                    // path in that case.
-                    if is_error {
-                        let cur_path = player.get_string_prop_pub("path").unwrap_or_default();
-                        if !cur_path.is_empty() {
-                            let st: tauri::State<'_, AppState> = app.state();
-                            // Torrent stream refused (file not in wanted window)
-                            // → widen window + loadfile-replace. Checked first
-                            // because a torrent URL can't be an archive path.
-                            if try_recover_torrent_load(st.inner(), &app, &cur_path) {
-                                continue;
-                            }
-                            if try_recover_archive_load(st.inner(), &app, &cur_path) {
-                                continue;
-                            }
-                        }
-                    }
                     #[derive(Serialize, Clone)]
                     struct EofPayload {
                         reason: i32,

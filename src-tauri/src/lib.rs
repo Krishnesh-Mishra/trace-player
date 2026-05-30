@@ -1,14 +1,11 @@
 mod agc;
-mod archive;
 mod commands;
 mod events;
-mod library;
 mod log;
 mod perf;
 mod player;
 mod power;
 mod state;
-mod streaming;
 mod thumbnailer;
 
 #[cfg(all(target_os = "windows", target_env = "msvc"))]
@@ -192,94 +189,15 @@ fn is_supported_source(s: &str) -> bool {
         return true;
     }
     let lower = s.to_ascii_lowercase();
-    if lower.ends_with(".torrent") {
-        return true;
-    }
     matches!(
         lower.split_once(':').map(|(scheme, _)| scheme),
-        Some("http" | "https" | "rtsp" | "rtmp" | "mms" | "magnet" | "file")
+        Some("http" | "https" | "rtsp" | "rtmp" | "mms" | "file")
     )
 }
 
-/// Headless CLI handler for the Windows Shell extension. Invoked as
-/// `trace-player.exe --thumbnail-gen <video_path>`. Initializes the
-/// thumbnailer mpv, writes the middle-frame JPG to the shared
-/// `library-thumbs` cache (so the in-app library lookup and the shell
-/// extension share one cache), and exits. No window, no event loop.
-///
-/// Returns `Some(exit_code)` when the CLI flag was consumed; the caller
-/// should `std::process::exit(code)`. Returns `None` when the flag is
-/// absent so `run()` proceeds with the normal Tauri startup.
+/// Stub for lite build — the shell-extension thumbnail CLI is not supported here.
 pub fn handle_cli() -> Option<i32> {
-    let args: Vec<String> = std::env::args().collect();
-    let mut i = 1usize;
-    while i < args.len() {
-        if args[i] == "--thumbnail-gen" {
-            let video_path = match args.get(i + 1) {
-                Some(p) => p.clone(),
-                None => {
-                    eprintln!("--thumbnail-gen requires a path argument");
-                    return Some(2);
-                }
-            };
-            return Some(run_thumbnail_gen(&video_path));
-        }
-        i += 1;
-    }
     None
-}
-
-fn run_thumbnail_gen(video_path: &str) -> i32 {
-    #[cfg(all(target_os = "windows", target_env = "msvc"))]
-    if let Err(e) = dll_bootstrap::extract_and_preload() {
-        eprintln!("libmpv preload failed: {e}");
-        return 3;
-    }
-
-    let thumbnailer = match Player::new_thumbnailer() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("thumbnailer init failed: {e}");
-            return 4;
-        }
-    };
-
-    // Mirror the same cache dir + hashing scheme `library::thumb_dir` and
-    // `library::path_hash` use, so the in-app library and the shell extension
-    // both look up by identical filenames.
-    let identifier = "com.krishnesh.traceplayer";
-    let base = match dirs::config_dir() {
-        Some(p) => p.join(identifier),
-        None => {
-            eprintln!("no config dir on this platform");
-            return 5;
-        }
-    };
-    let dir = base.join("library-thumbs");
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("create thumb dir: {e}");
-        return 6;
-    }
-
-    use sha1::{Digest, Sha1};
-    let mut hasher = Sha1::new();
-    hasher.update(video_path.as_bytes());
-    let digest = hasher.finalize();
-    let hash = hex::encode(&digest[..10]);
-    let dest = dir.join(format!("{hash}.jpg"));
-
-    if dest.exists() {
-        // Already cached — nothing to do.
-        return 0;
-    }
-
-    match thumbnailer::generate_persistent_thumb(&thumbnailer, video_path, &dest) {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("generate thumb: {e}");
-            7
-        }
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -352,24 +270,6 @@ pub fn run() {
                 .add_migrations(
                     "sqlite:library.db",
                     vec![
-                        tauri_plugin_sql::Migration {
-                            version: 1,
-                            description: "create library tables",
-                            sql: include_str!("../migrations/001_library.sql"),
-                            kind: tauri_plugin_sql::MigrationKind::Up,
-                        },
-                        tauri_plugin_sql::Migration {
-                            version: 2,
-                            description: "add file_index to items",
-                            sql: include_str!("../migrations/002_add_file_index.sql"),
-                            kind: tauri_plugin_sql::MigrationKind::Up,
-                        },
-                        tauri_plugin_sql::Migration {
-                            version: 3,
-                            description: "create downloads table",
-                            sql: include_str!("../migrations/003_downloads.sql"),
-                            kind: tauri_plugin_sql::MigrationKind::Up,
-                        },
                         tauri_plugin_sql::Migration {
                             version: 4,
                             description: "create watch history table",
@@ -520,50 +420,16 @@ pub fn run() {
             commands::set_audio_track,
             commands::set_subtitle_track,
             commands::get_tracks,
-            commands::set_audio_filters,
             commands::set_subtitle_style,
             commands::set_subtitle_delay,
             commands::start_thumbnailing,
             commands::request_thumb_window,
             commands::request_thumb_exact,
-            commands::set_image_params,
-            commands::set_aspect,
-            commands::set_zoom,
-            commands::set_rotate,
             commands::take_screenshot,
-            commands::set_ab_loop_a,
-            commands::set_ab_loop_b,
-            commands::set_audio_fx,
-            commands::set_hdr_mode,
-            commands::set_upscaling,
-            commands::set_interpolation,
-            commands::set_vsync,
-            commands::set_exclusive_fullscreen,
-            commands::set_perf_profile,
             commands::chapter_seek,
-            commands::ab_loop_cycle,
-            commands::ab_loop_clear,
-            commands::set_screenshot_dir,
-            commands::get_pipeline_info,
-            commands::set_loop_file,
-            commands::set_loop_playlist,
-            commands::playlist_shuffle,
-            commands::playlist_unshuffle,
-            commands::playlist_add,
-            commands::playlist_add_many,
-            commands::playlist_remove,
-            commands::playlist_play_index,
-            commands::playlist_clear,
-            commands::playlist_next,
-            commands::playlist_prev,
-            commands::playlist_move,
-            commands::get_playlist,
             commands::get_player_state,
             commands::load_subtitle,
             commands::frame_step,
-            commands::set_deinterlace,
-            commands::get_audio_devices,
-            commands::set_audio_device,
             commands::get_media_info,
             commands::enter_pip,
             commands::exit_pip,
@@ -574,32 +440,6 @@ pub fn run() {
             commands::take_cli_file,
             commands::open_source,
             commands::set_stream_cache,
-            commands::open_archive,
-            commands::set_torrent_cache_limit,
-            commands::set_torrent_upload_limit,
-            commands::set_torrent_download_limit,
-            commands::set_torrent_max_connections,
-            commands::set_seeding_enabled,
-            commands::resolve_torrent_files,
-            commands::resolve_torrent_file,
-            commands::cancel_torrent_resolve,
-            commands::cancel_active_source,
-            commands::list_downloads,
-            commands::pause_download,
-            commands::resume_download,
-            commands::start_download,
-            commands::stop_download,
-            commands::get_torrent_file_path,
-            library::generate_library_thumb,
-            library::read_thumb_base64,
-            library::get_app_thumb_dir,
-            library::read_directory_videos,
-            library::scan_common_folders,
-            library::get_file_metadata,
-            library::probe_video_info,
-            library::find_torrent_local_path,
-            library::generate_torrent_stream_thumb,
-            library::is_thumb_valid,
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
@@ -607,25 +447,8 @@ pub fn run() {
             std::process::exit(1);
         })
         .run(|app_handle, event| {
-            // RunEvent::Exit fires once after every window has been
-            // requested-close and right before tauri tears down managed
-            // state. We use it to ask rqbit to forget every torrent we added
-            // this session — the StreamingSession's Drop kills the sidecar
-            // unconditionally, but forget() lets rqbit flush cleanly first.
             if matches!(event, tauri::RunEvent::Exit) {
                 let st: tauri::State<'_, AppState> = app_handle.state();
-                commands::forget_all_torrents(st.inner());
-                // Explicitly drop the StreamingSession instead of trusting
-                // the Arc refcount to fall to zero — polling threads keep
-                // clones alive past app exit, which leaves rqbit running.
-                // take()ing the Option here triggers Drop synchronously and
-                // the Job Object's KILL_ON_JOB_CLOSE finishes anything that
-                // didn't exit gracefully in time.
-                if let Ok(mut g) = st.streaming.lock() {
-                    drop(g.take());
-                }
-                // Signal the AGC polling thread to terminate so it doesn't
-                // keep running after the app tears down.
                 st.agc.stop();
             }
         });

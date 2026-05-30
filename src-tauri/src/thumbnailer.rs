@@ -1,3 +1,4 @@
+#![allow(dead_code)] // lite build: library-only helpers (persistent thumbs / probe) retained for parity
 // Lazy on-hover thumbnail extraction.
 //
 // One headless mpv worker, two reactive paths — neither pre-extracts:

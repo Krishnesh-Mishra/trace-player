@@ -1,7 +1,7 @@
 [package]
 name = "trace-player"
-version = "1.0.2"
-description = "Trace Player — modern desktop video player"
+version = "1.0.2-lite"
+description = "Trace Player Lite — modern desktop video player (lite build)"
 authors = ["krishnesh"]
 edition = "2021"
 
@@ -26,18 +26,7 @@ sha1 = "0.10"
 hex = "0.4"
 base64 = "0.22"
 mimalloc = { version = "0.1", default-features = false }
-ureq = { version = "2", features = ["json", "tls"] }
-# Archive support (Slice 3): zip is pure Rust, sevenz-rust is pure Rust;
-# unrar wraps the upstream UnRAR C lib (vendored). All three feed a shared
-# trait in archive.rs so the lazy-extract + LRU code is format-agnostic.
-# TODO: upgrade to zip 2.x (current stable) — API changed (ZipArchive::new,
-# by_index return types differ); needs archive.rs refactor.
-zip = { version = "0.6", default-features = false, features = ["deflate"] }
-sevenz-rust = "~0.6"
-unrar = "~0.5"
-filetime = "0.2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
-dirs = "5"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

@@ -1,17 +1,15 @@
-use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::archive::ArchiveRegistry;
 use crate::player::Player;
-use crate::streaming::StreamingSession;
 
 // ── AGC ─────────────────────────────────────────────────────────────────────
 
-/// Live AGC (Automatic Gain Control) state. Volume nudges happen on a
-/// polling thread; user_volume is tracked separately so the UI slider stays
-/// put while AGC adjusts mpv's volume property under it.
+/// Live AGC (Automatic Gain Control) state. Kept (though disabled by default
+/// in the lite build) because `set_volume` still threads through it — user_volume
+/// is tracked separately from mpv's actual volume property so future AGC work
+/// can re-enable without touching the volume call sites.
 pub struct AgcController {
     pub enabled: AtomicBool,
     pub params: Mutex<AgcParams>,
@@ -46,12 +44,8 @@ impl AgcController {
 
 // ── Performance / Power ─────────────────────────────────────────────────────
 
-/// Performance profile + battery state. The active profile string is stored
-/// so the power-detection thread can re-resolve "auto" without keeping its
-/// own enum copy. shader_dir is set once at startup from the Tauri resource
-/// dir and read by perf::apply_upscaling.
 pub struct PerfController {
-    pub profile: Mutex<String>, // serialized PerfProfile
+    pub profile: Mutex<String>,
     pub on_battery: AtomicBool,
     pub shader_dir: Mutex<Option<PathBuf>>,
 }
@@ -66,13 +60,8 @@ impl PerfController {
     }
 
     pub fn set_shader_dir(&self, dir: PathBuf) {
-        match self.shader_dir.lock() {
-            Ok(mut g) => {
-                *g = Some(dir);
-            }
-            Err(e) => {
-                eprintln!("[state] shader_dir lock poisoned: {e}");
-            }
+        if let Ok(mut g) = self.shader_dir.lock() {
+            *g = Some(dir);
         }
     }
 
@@ -80,6 +69,7 @@ impl PerfController {
         self.shader_dir.lock().ok().and_then(|g| g.clone())
     }
 
+    #[allow(dead_code)]
     pub fn set_profile(&self, name: &str) {
         if let Ok(mut g) = self.profile.lock() {
             *g = name.to_string();
@@ -99,10 +89,8 @@ impl PerfController {
     }
 }
 
-// ── App ─────────────────────────────────────────────────────────────────────
+// ── PiP ─────────────────────────────────────────────────────────────────────
 
-/// Pre-PiP window geometry, stashed so exit_pip can restore the window to
-/// where the user had it. None when not currently in PiP.
 #[derive(Clone, Debug)]
 pub struct PipGeometry {
     pub width: u32,
@@ -126,17 +114,9 @@ impl PipMemory {
 
 // ── UI dormancy ─────────────────────────────────────────────────────────────
 
-/// Tracks whether the WebView overlay is currently hidden for power saving.
-/// `webview_hwnd` is the cached HWND of the WebView2 child window (Windows
-/// only) found at startup so subsequent show/hide calls don't re-enumerate.
-/// `is_dormant` is the source of truth — checked by the mpv event loop so a
-/// MOUSE_MOVE storm only emits one ui:wake per dormancy cycle.
 pub struct UiController {
     pub is_dormant: AtomicBool,
     pub webview_hwnd: Mutex<Option<isize>>,
-    /// Monotonic millisecond stamp of the last `ui:wake` event emitted to JS.
-    /// Used to rate-limit the per-pixel MOUSE_MOVE storm so JS receives at
-    /// most one wake event per ~500 ms while the cursor is moving over mpv.
     pub last_wake_emit_ms: AtomicU64,
 }
 
@@ -160,82 +140,16 @@ impl UiController {
     }
 }
 
-// ── Torrent session tracking ────────────────────────────────────────────────
-
-/// Snapshot of the currently-playing torrent file. Used by the events thread
-/// to drive lazy per-file priority: when this changes (mpv loads a new file),
-/// the handler tells rqbit which file indices are now wanted.
-///
-/// `prev_idx` is the previous file index in the same torrent — used to
-/// classify natural advance (delta=+1, prefetch one ahead) vs manual skip
-/// (delta>1 or backwards, prefetch two ahead so the user has buffer if they
-/// skip again).
-#[derive(Clone, Debug)]
-pub struct ActiveTorrentItem {
-    pub torrent_id: u32,
-    pub file_idx: usize,
-    #[allow(dead_code)]
-    pub prev_idx: Option<usize>,
-}
+// ── App ─────────────────────────────────────────────────────────────────────
 
 pub struct AppState {
     pub player: Option<Arc<Player>>,
-    /// Lazy thumbnailer mpv. Spawning a second mpv at startup adds ~100-200ms
-    /// of mpv_initialize + codec/font loading the user doesn't pay for unless
-    /// they actually open the library and generate thumbnails. Filled on
-    /// first thumbnail request via `get_or_init_thumbnailer`.
     pub thumbnailer: Mutex<Option<Arc<Player>>>,
     pub agc: Arc<AgcController>,
     pub perf: Arc<PerfController>,
     pub pip: Arc<PipMemory>,
     pub ui: Arc<UiController>,
     pub cli_file: Mutex<Option<String>>,
-    /// Lazy rqbit.exe sidecar — None until the first magnet/torrent open.
-    pub streaming: Arc<Mutex<Option<StreamingSession>>>,
-    /// All torrent IDs added during this session — drained on shutdown so
-    /// rqbit's `forget` is called before we kill the sidecar.
-    pub torrent_ids: Arc<Mutex<HashSet<u32>>>,
-    /// Currently-playing torrent file (None when current source is not a
-    /// torrent stream). Drives the events.rs prefetch logic.
-    pub active_torrent: Arc<Mutex<Option<ActiveTorrentItem>>>,
-    /// All video file indices for the currently-loaded torrent. Populated in
-    /// load_torrent_into_playlist from the full file list rqbit returned.
-    /// handle_torrent_advance passes ALL of these to set_only_files so every
-    /// episode is always "wanted" — without this, jumping past the prefetch
-    /// window caused rqbit to refuse the stream and mpv to error out.
-    pub torrent_video_idxs: Arc<Mutex<Vec<usize>>>,
-    /// Per-file metadata for the current torrent: (file_index, stream_url, byte_size).
-    /// Used by the seek command to calculate byte offsets and pre-announce the
-    /// new playback position to rqbit so it can reprioritize piece downloads.
-    pub torrent_video_files: Arc<Mutex<Vec<(usize, String, u64)>>>,
-    /// Open archives (zip/7z/rar) the user has loaded into the playlist.
-    /// Indexed by cache_dir; events.rs consults this to extract-on-demand
-    /// when mpv tries to load a cache path that doesn't exist yet.
-    pub archive_registry: Arc<Mutex<ArchiveRegistry>>,
-    /// Last archive cache path mpv successfully loaded. Used to remove
-    /// stale entries from the active-paths set when the user advances.
-    pub active_archive_path: Arc<Mutex<Option<PathBuf>>>,
-    /// Set the first time `ensure_streaming` succeeds so the per-second
-    /// torrent-stats polling thread is only spawned once.
-    pub stats_poller_started: AtomicBool,
-    /// Max torrent cache size in bytes (0 = no limit). Eviction runs after
-    /// sources are dropped. Set by the frontend via `set_torrent_cache_limit`.
-    pub cache_limit_bytes: std::sync::atomic::AtomicU64,
-    /// Upload rate limit in bytes/sec (0 = unlimited). Applied at next rqbit spawn.
-    pub upload_limit_bytes: std::sync::atomic::AtomicU64,
-    /// Download rate limit in bytes/sec (0 = unlimited). Applied at next rqbit spawn.
-    pub download_limit_bytes: std::sync::atomic::AtomicU64,
-    /// When false (default), force the upload rate limit to ~0 bytes/sec at
-    /// rqbit spawn — the player won't seed torrents back to the swarm.
-    /// Frontend exposes this as the "Seed downloaded videos" toggle.
-    pub seeding_enabled: AtomicBool,
-    /// Torrent ID currently being resolved in `resolve_torrent_files`.
-    /// Set after `add_magnet` returns so `cancel_torrent_resolve` can forget it.
-    pub resolving_torrent_id: Mutex<Option<u32>>,
-    /// Per-torrent set of file indices the user has requested for download.
-    /// Accumulated across multiple `start_download` calls so `set_only_files`
-    /// includes ALL wanted files, not just the latest one.
-    pub download_wanted_files: Mutex<HashMap<u32, HashSet<usize>>>,
 }
 
 impl AppState {
@@ -248,27 +162,9 @@ impl AppState {
             pip: Arc::new(PipMemory::new()),
             ui: Arc::new(UiController::new()),
             cli_file: Mutex::new(None),
-            streaming: Arc::new(Mutex::new(None)),
-            torrent_ids: Arc::new(Mutex::new(HashSet::new())),
-            active_torrent: Arc::new(Mutex::new(None)),
-            torrent_video_idxs: Arc::new(Mutex::new(Vec::new())),
-            torrent_video_files: Arc::new(Mutex::new(Vec::new())),
-            archive_registry: Arc::new(Mutex::new(ArchiveRegistry::new())),
-            active_archive_path: Arc::new(Mutex::new(None)),
-            stats_poller_started: AtomicBool::new(false),
-            cache_limit_bytes: std::sync::atomic::AtomicU64::new(0),
-            upload_limit_bytes: std::sync::atomic::AtomicU64::new(524288), // 0.5 MiB/s default
-            download_limit_bytes: std::sync::atomic::AtomicU64::new(0),
-            seeding_enabled: AtomicBool::new(false),
-            resolving_torrent_id: Mutex::new(None),
-            download_wanted_files: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Get or lazily create the thumbnailer mpv instance. Cheap on the
-    /// happy path (just a Mutex acquire + Arc clone). Construction only
-    /// happens once, on the first thumbnail request — startup never pays
-    /// for it.
     pub fn get_or_init_thumbnailer(&self) -> Option<Arc<Player>> {
         let mut guard = self.thumbnailer.lock().ok()?;
         if let Some(p) = guard.as_ref() {
