@@ -83,6 +83,8 @@ interface Props {
   onAudioFxChange: (f: AudioFxState) => void;
   deinterlace: boolean;
   onDeinterlaceToggle: () => void;
+  autoFit: boolean;
+  onAutoFitToggle: () => void;
   currentAudioDevice: string;
   onAudioDeviceChange: (name: string) => void;
   loopMode: LoopMode;
@@ -341,6 +343,8 @@ export default function SettingsMenu(props: Props) {
                 direction={direction}
                 video={props.videoState}
                 onChange={props.onVideoStateChange}
+                autoFit={props.autoFit}
+                onAutoFitToggle={props.onAutoFitToggle}
                 onBack={() => goBackTo("video_appearance")}
               />
             )}

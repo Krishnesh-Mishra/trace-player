@@ -162,11 +162,13 @@ export default function App() {
   const [upscaling, setUpscaling] = useState<UpscalingProfile>("low");
   const [interpolation, setInterpolation] = useState<InterpolationMode>("off");
   const [vsync, setVsync] = useState(true);
-  // Windows: exclusive-fullscreen bypasses DWM so VSync isn't gated by the
-  // compositor (otherwise V-Sync looks "applied" but stutters anyway).
-  // Default on — users on multi-monitor / HDR-mixed setups who hit issues
-  // can flip it off in Settings → Video → Frame Smoothing.
-  const [exclusiveFullscreen, setExclusiveFullscreen] = useState(true);
+  // Windows: exclusive-fullscreen bypasses DWM, but acquiring it forces a
+  // DXGI display-mode switch on every fullscreen enter/exit — a 1-3s GPU
+  // stall the user sees as the video freezing. Default OFF: borderless
+  // windowed fullscreen (DWM flip-model + MPO) is just as smooth on Win10/11
+  // with zero hitch. Power users can opt back in via Settings → Video →
+  // Frame Smoothing.
+  const [exclusiveFullscreen, setExclusiveFullscreen] = useState(false);
   const [perfProfile, setPerfProfile] = useState<PerfProfileName>("auto");
   const [perfEffective, setPerfEffective] = useState<string>("balanced");
   const [onBattery, setOnBattery] = useState(false);
@@ -182,6 +184,11 @@ export default function App() {
   const [pipMode, setPipMode] = useState(false);
 
   const [deinterlace, setDeinterlace] = useState(false);
+  // Auto-fit: detect baked-in black bars (letterbox/pillarbox) on load and
+  // crop them out so the picture fills the frame. Off by default — it only
+  // runs when the user enables it in Settings → Video → Aspect, Zoom & Rotate.
+  const [autoFit, setAutoFit] = useState(false);
+  const autoFitRef = useRef(false);
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [titlebarAlwaysShow, setTitlebarAlwaysShow] = useState(false);
   const [titlebarWidth, setTitlebarWidth] = useState<"full" | "small">("small");
@@ -768,6 +775,7 @@ export default function App() {
           savedLoop,
           savedDir,
           savedDeinterlace,
+          savedAutoFit,
           savedAlwaysOnTop,
           savedAudioDevice,
           legacyRecent,
@@ -791,6 +799,7 @@ export default function App() {
           s.get<LoopMode>("loopMode"),
           s.get<string>("screenshotDir"),
           s.get<boolean>("deinterlace"),
+          s.get<boolean>("autoFit"),
           s.get<boolean>("alwaysOnTop"),
           s.get<string>("audioDevice"),
           s.get<string[]>("recentFiles"),
@@ -821,6 +830,10 @@ export default function App() {
           invoke("set_screenshot_dir", { path: savedDir }).catch(() => {});
         }
         if (typeof savedDeinterlace === "boolean") setDeinterlace(savedDeinterlace);
+        if (typeof savedAutoFit === "boolean") {
+          setAutoFit(savedAutoFit);
+          autoFitRef.current = savedAutoFit;
+        }
         if (savedAlwaysOnTop) {
           setAlwaysOnTop(true);
           getCurrentWindow().setAlwaysOnTop(true).catch(() => {});
@@ -1219,31 +1232,61 @@ export default function App() {
     }
   }, []);
 
-  // Sync fullscreen state + force mpv's child to refill the parent on every
-  // resize. mpv's --wid WndProc subclass normally handles WM_SIZE, but
-  // Tauri's setFullscreen path on Windows doesn't reliably reach it. We
-  // skip if an invoke is already in flight so the IPC channel can't back
-  // up during a window-drag storm.
+  // Force mpv's child to refill the parent on resize + reconcile fullscreen
+  // state. mpv's --wid WndProc normally handles WM_SIZE, but Tauri's
+  // setFullscreen path on Windows doesn't reliably reach it.
+  //
+  // onResized fires dozens of times/second during a drag or maximize/restore.
+  // The previous version issued an `isFullscreen()` IPC round-trip *per event*
+  // — that flood saturated Tauri's single IPC channel and made the whole
+  // window feel non-responsive while resizing. Now:
+  //   • resize_mpv_to_parent is gated by an in-flight flag *and* coalesced to
+  //     one call per animation frame (the most we can usefully paint), with a
+  //     trailing call after the storm settles so the final size always lands.
+  //   • isFullscreen() is queried only once, on the trailing edge (180ms after
+  //     the last resize) — enough to catch OS-driven fullscreen changes (F11
+  //     via the window manager) without the per-event flood. Our own toggle
+  //     functions already set the state optimistically.
   useEffect(() => {
     let active = true;
-    let pending = false;
+    let inFlight = false;
+    let rafId = 0;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
     const win = getCurrentWindow();
-    const unlisten = win.onResized(() => {
-      if (!pending) {
-        pending = true;
-        invoke("resize_mpv_to_parent").finally(() => {
-          pending = false;
-        });
+
+    const pumpResize = () => {
+      rafId = 0;
+      if (inFlight) {
+        // A resize is mid-flight; re-arm so the latest size still gets sent.
+        rafId = requestAnimationFrame(pumpResize);
+        return;
       }
-      win
-        .isFullscreen()
-        .then((fs) => {
-          if (active) setIsFullscreen(fs);
-        })
-        .catch(() => {});
+      inFlight = true;
+      invoke("resize_mpv_to_parent").finally(() => {
+        inFlight = false;
+      });
+    };
+
+    const unlisten = win.onResized(() => {
+      if (!rafId) rafId = requestAnimationFrame(pumpResize);
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => {
+        // One trailing resize to guarantee the final dimensions land, then a
+        // single fullscreen reconcile.
+        if (!rafId) rafId = requestAnimationFrame(pumpResize);
+        win
+          .isFullscreen()
+          .then((fs) => {
+            if (active) setIsFullscreen(fs);
+          })
+          .catch(() => {});
+      }, 180);
     });
+
     return () => {
       active = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      if (settleTimer) clearTimeout(settleTimer);
       unlisten.then((f) => f());
     };
   }, []);
@@ -1643,6 +1686,13 @@ export default function App() {
     } else {
       invoke("set_perf_profile", { profile: perfProfile }).catch(() => {});
     }
+    // Auto-fit runs per file (video-crop resets on loadfile). The backend waits
+    // for video-params, samples ~2s of decoded frames, and only crops a stable,
+    // plausible black bar — so kicking it off here is safe even before the
+    // first frame has decoded.
+    if (autoFitRef.current) {
+      invoke("auto_fit_detect").catch(logErr("auto_fit_detect"));
+    }
   };
   reapplyForCurrentFileRef.current = reapplyForCurrentFile;
 
@@ -1882,18 +1932,64 @@ export default function App() {
     invoke("set_image_params", { params: p }).catch(logErr("set_image_params"));
   }, []);
 
+  // Coalesced zoom IPC. Zoom changes arrive in bursts — a slider drag or a
+  // pinch fires one event per frame. Issuing a fresh `invoke("set_zoom")` for
+  // each queues them behind mpv's command pump, so the picture visibly trails
+  // the gesture. Instead we keep only the *latest* target: at most one set_zoom
+  // is ever in flight, and the moment it resolves we send the freshest pending
+  // value if it changed. No backlog, always current → zoom tracks the gesture
+  // instantly. Ref-based so it survives re-renders without re-creating state.
+  const zoomIpcRef = useRef<{ inFlight: boolean; pending: number | null; last: number | null }>(
+    { inFlight: false, pending: null, last: null }
+  );
+  const pushZoom = useCallback((z: number) => {
+    const s = zoomIpcRef.current;
+    s.pending = z;
+    const flush = () => {
+      const st = zoomIpcRef.current;
+      if (st.pending === null || st.pending === st.last) {
+        st.inFlight = false;
+        return;
+      }
+      const target = st.pending;
+      st.pending = null;
+      st.last = target;
+      st.inFlight = true;
+      invoke("set_zoom", { zoom: target }).catch(logErr("set_zoom")).finally(flush);
+    };
+    if (!s.inFlight) flush();
+  }, []);
+
   const handleVideoStateChange = useCallback((next: VideoState) => {
     if (next.aspect !== videoState.aspect) {
+      // A manual aspect choice supersedes an auto-fit crop — clear the crop so
+      // the two don't compound into a double-cropped frame.
+      if (autoFitRef.current) invoke("clear_crop").catch(() => {});
       invoke("set_aspect", { ratio: next.aspect }).catch(logErr("set_aspect"));
     }
     if (next.zoom !== videoState.zoom) {
-      invoke("set_zoom", { zoom: next.zoom }).catch(logErr("set_zoom"));
+      pushZoom(next.zoom);
     }
     if (next.rotate !== videoState.rotate) {
       invoke("set_rotate", { degrees: next.rotate }).catch(logErr("set_rotate"));
     }
     setVideoState(next);
-  }, [videoState]);
+  }, [videoState, pushZoom]);
+
+  // Auto-fit toggle. On → probe the current file immediately (if one is
+  // playing) and persist the preference; the load path re-runs detection on
+  // every subsequent file. Off → drop any crop we applied.
+  const handleAutoFitToggle = useCallback(() => {
+    const next = !autoFitRef.current;
+    setAutoFit(next);
+    autoFitRef.current = next;
+    storeRef.current?.set("autoFit", next).then(() => saveStore()).catch(() => {});
+    if (next) {
+      if (hasFileRef.current) invoke("auto_fit_detect").catch(logErr("auto_fit_detect"));
+    } else {
+      invoke("clear_crop").catch(() => {});
+    }
+  }, []);
 
   // Manual fine-grain knobs. When the user touches any of these directly,
   // the Performance profile flips to "custom" so the umbrella stops
@@ -2264,6 +2360,8 @@ export default function App() {
             onAudioFxChange={handleAudioFxChange}
             deinterlace={deinterlace}
             onDeinterlaceToggle={handleDeinterlaceToggle}
+            autoFit={autoFit}
+            onAutoFitToggle={handleAutoFitToggle}
             audioDevice={audioDevice}
             onAudioDeviceChange={handleAudioDeviceChange}
             onScreenshot={takeScreenshot}

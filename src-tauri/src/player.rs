@@ -326,12 +326,17 @@ impl Player {
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
             );
 
-            // Windows: bypass the desktop compositor in fullscreen for direct
-            // display swap (lower latency, smoother high-refresh delivery).
-            // Reverts automatically when leaving fullscreen. Requires
-            // gpu-context=d3d11; silently ignored otherwise.
+            // Windows: D3D11 *exclusive* fullscreen bypasses the compositor for
+            // a direct display swap, but acquiring it forces a DXGI display-mode
+            // switch on every fullscreen enter/exit — a 1-3s GPU stall the user
+            // sees as the video freezing/stuttering when toggling fullscreen.
+            // Default OFF: on Win10/11 the DWM flip-model + MPO (multiplane
+            // overlay) already delivers near-exclusive latency for borderless
+            // windowed fullscreen with zero mode-switch hitch. Power users can
+            // opt back in via Settings (set_exclusive_fullscreen) — it takes
+            // effect on the next fullscreen transition.
             #[cfg(target_os = "windows")]
-            set_opt_optional(handle, "d3d11-exclusive-fs", "yes");
+            set_opt_optional(handle, "d3d11-exclusive-fs", "no");
 
             let err = ffi::mpv_initialize(handle);
             if err < 0 {

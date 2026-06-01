@@ -108,6 +108,8 @@ interface ControlBarProps {
   onAudioFxChange: (f: AudioFxState) => void;
   deinterlace: boolean;
   onDeinterlaceToggle: () => void;
+  autoFit: boolean;
+  onAutoFitToggle: () => void;
   audioDevice: string;
   onAudioDeviceChange: (name: string) => void;
   onScreenshot: () => void;
@@ -193,6 +195,8 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
     onAudioFxChange,
     deinterlace,
     onDeinterlaceToggle,
+    autoFit,
+    onAutoFitToggle,
     audioDevice,
     onAudioDeviceChange,
     onScreenshot,
@@ -471,6 +475,8 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
               onAudioFxChange={onAudioFxChange}
               deinterlace={deinterlace}
               onDeinterlaceToggle={onDeinterlaceToggle}
+              autoFit={autoFit}
+              onAutoFitToggle={onAutoFitToggle}
               currentAudioDevice={audioDevice}
               onAudioDeviceChange={onAudioDeviceChange}
               loopMode={loopMode}

@@ -473,6 +473,8 @@ pub fn run() {
             commands::set_image_params,
             commands::set_aspect,
             commands::set_zoom,
+            commands::auto_fit_detect,
+            commands::clear_crop,
             commands::set_rotate,
             commands::take_screenshot,
             commands::set_ab_loop_a,

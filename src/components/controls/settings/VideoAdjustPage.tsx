@@ -3,18 +3,27 @@ import { RotateCcw } from "lucide-react";
 import type { VideoState } from "../../types";
 import { ASPECT_OPTIONS, DEFAULT_VIDEO_STATE } from "../../types";
 import RangeSlider from "../../ui/RangeSlider";
-import { BackHeader, TrackOption, pageVariants, pageTransition } from "./shared";
+import { BackHeader, ToggleRow, TrackOption, pageVariants, pageTransition } from "./shared";
 
 interface Props {
   direction: number;
   video: VideoState;
   onChange: (v: VideoState) => void;
+  autoFit: boolean;
+  onAutoFitToggle: () => void;
   onBack: () => void;
 }
 
 const ROTATIONS: VideoState["rotate"][] = [0, 90, 180, 270];
 
-export default function VideoAdjustPage({ direction, video, onChange, onBack }: Props) {
+export default function VideoAdjustPage({
+  direction,
+  video,
+  onChange,
+  autoFit,
+  onAutoFitToggle,
+  onBack,
+}: Props) {
   const isModified =
     video.aspect !== "auto" || video.zoom !== 0 || video.rotate !== 0;
 
@@ -31,6 +40,14 @@ export default function VideoAdjustPage({ direction, video, onChange, onBack }: 
       <BackHeader label="Aspect, Zoom & Rotate" onClick={onBack} />
 
       <div className="px-3 py-3 space-y-3">
+        {/* Auto-fit (auto-crop black bars) */}
+        <ToggleRow
+          label="Auto-fit (remove black bars)"
+          description="Detect baked-in letterbox/pillarbox on load and crop it so the picture fills the frame"
+          enabled={autoFit}
+          onToggle={onAutoFitToggle}
+        />
+
         {/* Aspect ratio */}
         <div>
           <div className="text-[11px] text-[var(--np-text-secondary)] mb-1.5">Aspect ratio</div>

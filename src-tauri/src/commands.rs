@@ -351,6 +351,122 @@ pub fn set_zoom(zoom: f64, state: State<'_, AppState>) -> Result<(), String> {
     player_ref(&state)?.set_double_prop("video-zoom", zoom)
 }
 
+/// mpv filter label for the temporary cropdetect probe. Kept distinct from any
+/// user-facing filter so add/remove never collides with the EQ/AGC chain.
+const AUTOFIT_LABEL: &str = "npautofit";
+
+/// Auto-fit (auto-crop) — detect baked-in black bars (letterbox/pillarbox) and
+/// crop them out so the real picture fills the frame, with no rescale/softness
+/// (mpv's `video-crop` is a zero-cost GPU crop).
+///
+/// Returns immediately and runs detection on a detached worker thread so it
+/// never blocks the IPC handler. The actual work:
+///   1. Insert a labelled `cropdetect` filter. `reset=0` makes it *accumulate*
+///      the largest non-black bounding box ever seen — so a dark intro, a
+///      fade-in, or a momentarily-black scene can only ever *grow* the kept
+///      region, never crop into real content. White strips / bright borders
+///      are above the threshold and are simply kept (never cropped) — exactly
+///      the conservative behavior we want.
+///   2. Poll the filter's metadata for ~2s of decoded frames.
+///   3. Apply the converged crop **only if** it is plausible (≥60% of each
+///      dimension) and actually removes a meaningful bar (≥8px). Otherwise do
+///      nothing — a no-op is always the safe fallback.
+///   4. Remove the probe filter regardless of outcome.
+#[tauri::command]
+pub fn auto_fit_detect(state: State<'_, AppState>) -> Result<(), String> {
+    let player = state
+        .player
+        .as_ref()
+        .ok_or_else(|| "Player not initialized".to_string())?
+        .clone();
+
+    std::thread::spawn(move || {
+        // Clean any stale probe from a previous run, then insert a fresh one.
+        let _ = player.command_silent(&["vf", "remove", &format!("@{AUTOFIT_LABEL}")]);
+        let add = format!(
+            "@{AUTOFIT_LABEL}:lavfi=[cropdetect=limit=24:round=2:reset=0]"
+        );
+        if player.command(&["vf", "add", &add]).is_err() {
+            crate::np_warn!("autofit", "could not insert cropdetect filter");
+            return;
+        }
+
+        // Full decoded dimensions — the yardstick for "is this crop sane?".
+        // Poll briefly because video-params may not be populated the instant
+        // a file loads.
+        let mut full_w = 0i64;
+        let mut full_h = 0i64;
+        for _ in 0..20 {
+            full_w = player.get_int_prop("video-params/w").unwrap_or(0);
+            full_h = player.get_int_prop("video-params/h").unwrap_or(0);
+            if full_w > 0 && full_h > 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        if full_w <= 0 || full_h <= 0 {
+            let _ = player.command_silent(&["vf", "remove", &format!("@{AUTOFIT_LABEL}")]);
+            return;
+        }
+
+        // Sample the accumulated bounding box over ~2s of playback. cropdetect
+        // only updates metadata while frames decode, so if the file is paused
+        // we simply read the same value repeatedly — harmless.
+        let meta = |key: &str| -> Option<i64> {
+            player
+                .get_string_prop_pub(&format!("vf-metadata/{AUTOFIT_LABEL}/lavfi.cropdetect.{key}"))
+                .and_then(|s| s.trim().parse::<i64>().ok())
+        };
+        let mut best: Option<(i64, i64, i64, i64)> = None;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if let (Some(w), Some(h), Some(x), Some(y)) =
+                (meta("w"), meta("h"), meta("x"), meta("y"))
+            {
+                if w > 0 && h > 0 {
+                    best = Some((w, h, x, y));
+                }
+            }
+        }
+
+        // Done probing — always pull the cropdetect filter back out.
+        let _ = player.command_silent(&["vf", "remove", &format!("@{AUTOFIT_LABEL}")]);
+
+        let Some((w, h, x, y)) = best else {
+            crate::np_info!("autofit", "no crop detected — leaving frame untouched");
+            return;
+        };
+
+        // Sanity gate. Reject implausibly small regions (a fully-dark probe
+        // window) and crops that barely trim anything (rounding noise).
+        let removes_bar = (full_w - w) >= 8 || (full_h - h) >= 8;
+        let plausible = w as f64 >= full_w as f64 * 0.6 && h as f64 >= full_h as f64 * 0.6;
+        if !removes_bar || !plausible {
+            crate::np_info!(
+                "autofit",
+                "detected {w}x{h}+{x}+{y} vs {full_w}x{full_h} — not applied (noise/implausible)"
+            );
+            return;
+        }
+
+        let crop = format!("{w}x{h}+{x}+{y}");
+        if player.set_string_prop_pub("video-crop", &crop).is_ok() {
+            crate::np_info!("autofit", "applied video-crop={crop} (full {full_w}x{full_h})");
+        }
+    });
+
+    Ok(())
+}
+
+/// Clear any auto-fit crop and remove a lingering probe filter. Called when the
+/// user turns auto-fit off or picks a manual aspect mode.
+#[tauri::command]
+pub fn clear_crop(state: State<'_, AppState>) -> Result<(), String> {
+    let p = player_ref(&state)?;
+    let _ = p.command_silent(&["vf", "remove", &format!("@{AUTOFIT_LABEL}")]);
+    p.set_string_prop_pub("video-crop", "")
+}
+
 #[tauri::command]
 pub fn set_rotate(degrees: i64, state: State<'_, AppState>) -> Result<(), String> {
     player_ref(&state)?.set_int_prop("video-rotate", degrees)

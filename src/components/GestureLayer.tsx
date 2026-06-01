@@ -115,8 +115,12 @@ export default function GestureLayer({
         const arr = Array.from(pointers.current.values());
         const d = dist(arr[0], arr[1]);
         if (pinchBase.current.dist > 0) {
+          // `zoom` is mpv's video-zoom, which is log2(scale): 0 = 1×, +1 = 2×.
+          // A pinch changes the *linear* scale by `ratio`, so in log space it's
+          // an additive log2(ratio) — multiplying the exponent (the old bug)
+          // made small pinches explode. Clamp to 0.5×..4× (-1..+2).
           const ratio = d / pinchBase.current.dist;
-          const next = Math.max(0.5, Math.min(5, pinchBase.current.zoom * ratio));
+          const next = Math.max(-1, Math.min(2, pinchBase.current.zoom + Math.log2(ratio)));
           onZoomChange(next);
         }
       }
