@@ -15,6 +15,7 @@ interface Props {
   progressRef: React.RefObject<number>; // 0..100, updated at 10Hz
   duration: number; // seconds
   onSeek: (progress: number) => void;
+  onScrub?: (progress: number) => void;
   onSeekCommit: (progress: number) => void;
   thumbnails: ThumbnailSheet | null;
   denseThumbs?: Map<number, string>;
@@ -42,8 +43,13 @@ const DENSE_NEAREST_TOLERANCE_S = 1.5;
 
 /**
  * Timeline scrubber with split contract:
- * - `onSeek` fires continuously while dragging — visual preview only.
- * - `onSeekCommit` fires once on pointer-up — actual mpv seek.
+ * - `onSeek` updates the visual bar + seek target (no backend seek) on press
+ *   and while dragging.
+ * - `onScrub` fires the cheap live keyframe seek — ONLY once the pointer has
+ *   actually moved. A plain click never calls it, so a click can't flash the
+ *   nearest-keyframe position (seconds off on long videos) before the exact
+ *   commit lands.
+ * - `onSeekCommit` fires once on pointer-up — the exact mpv seek.
  * Hover anywhere on the bar shows a floating timestamp tooltip; if the
  * sprite atlas has arrived, a frame preview floats above it.
  */
@@ -51,6 +57,7 @@ export default function Timeline({
   progressRef,
   duration,
   onSeek,
+  onScrub,
   onSeekCommit,
   thumbnails,
   denseThumbs,
@@ -112,29 +119,52 @@ export default function Timeline({
     return Math.min(100, Math.max(0, ((clientX - rect.left) / rect.width) * 100));
   }, []);
 
+  // Pointer-down X and whether the gesture has crossed the drag threshold.
+  // A press that never moves beyond MOVE_THRESHOLD_PX is treated as a click:
+  // it skips the live keyframe scrub entirely and resolves to a single exact
+  // seek on pointer-up. This is what stops a click from briefly playing the
+  // nearest keyframe (seconds away on long-GOP files) before correcting.
+  const downXRef = useRef(0);
+  const movedRef = useRef(false);
+  const MOVE_THRESHOLD_PX = 4;
+
   const handlePointerDown = (e: React.PointerEvent) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     setDragging(true);
+    downXRef.current = e.clientX;
+    movedRef.current = false;
     const p = getPercent(e.clientX);
-    log.info("timeline", `drag-start pct=${p.toFixed(2)}%`);
-    onSeek(p);
+    log.info("timeline", `press pct=${p.toFixed(2)}%`);
+    onSeek(p); // visual + seek-target only; no backend seek yet
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
     const p = getPercent(e.clientX);
     setHoverPct(p);
-    if (dragging) onSeek(p);
+    if (dragging) {
+      onSeek(p); // keep the bar glued to the cursor
+      if (!movedRef.current && Math.abs(e.clientX - downXRef.current) > MOVE_THRESHOLD_PX) {
+        movedRef.current = true;
+        log.debug("timeline", "drag threshold crossed — live scrub on");
+      }
+      // Live keyframe preview only once it's a real drag.
+      if (movedRef.current) onScrub?.(p);
+    }
     if (duration > 0) scheduleHoverWindow((p / 100) * duration);
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
     if (dragging) {
       const p = getPercent(e.clientX);
-      log.info("timeline", `drag-end pct=${p.toFixed(2)}% (commit)`);
+      log.info(
+        "timeline",
+        `${movedRef.current ? "drag-end" : "click"} pct=${p.toFixed(2)}% (commit)`
+      );
       onSeek(p);
       onSeekCommit(p);
     }
     setDragging(false);
+    movedRef.current = false;
   };
 
   const progress = progressRef.current;

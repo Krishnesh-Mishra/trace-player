@@ -129,6 +129,7 @@ interface ControlBarProps {
   onVolumeChange: (v: number) => void;
   onMuteToggle: () => void;
   onSeek: (progress: number) => void;
+  onScrub?: (progress: number) => void;
   onSeekCommit: (progress: number) => void;
   onSpeedChange: (speed: number) => void;
   onAudioTrackChange: (id: string) => void;
@@ -212,6 +213,7 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
     onVolumeChange,
     onMuteToggle,
     onSeek,
+    onScrub,
     onSeekCommit,
     onSpeedChange,
     onAudioTrackChange,
@@ -544,6 +546,7 @@ const ControlBar = memo(function ControlBar(props: ControlBarProps) {
           progressRef={progressRef}
           duration={duration}
           onSeek={onSeek}
+          onScrub={onScrub}
           onSeekCommit={onSeekCommit}
           thumbnails={thumbnails}
           denseThumbs={denseThumbs}

@@ -1331,7 +1331,14 @@ export default function App() {
     invoke("request_thumb_exact", { t }).catch(() => {});
   }, []);
 
-  const seekAbsolutePct = useCallback((pct: number) => {
+  // Navigation seeks default to keyframe ("fast") mode — like VLC. mpv jumps
+  // to the nearest keyframe and resumes playback immediately instead of
+  // decoding the whole GOP down to the exact frame (which freezes for
+  // 200-300ms on long-GOP 4K/8K files). The landing can be up to ~one GOP
+  // before the click — sub-pixel on a long timeline and imperceptible in
+  // practice. Pass exact:true only when frame precision matters more than
+  // speed (e.g. typed timestamp jumps).
+  const seekAbsolutePct = useCallback((pct: number, exact = false) => {
     if (!hasFileRef.current) return;
     const d = durationRef.current;
     if (d <= 0) return;
@@ -1340,8 +1347,9 @@ export default function App() {
     currentTimeRef.current = seconds;
     progressRef.current = pct;
     setDisplayTime(seconds);
-    log.info("seek", `absolute pct=${pct.toFixed(2)}% t=${seconds.toFixed(3)}s`);
-    invoke("seek", { seconds, mode: "absolute" }).catch(logErr("seek"));
+    const mode = exact ? "absolute" : "absolute+keyframes";
+    log.info("seek", `absolute pct=${pct.toFixed(2)}% t=${seconds.toFixed(3)}s mode=${mode}`);
+    invoke("seek", { seconds, mode }).catch(logErr("seek"));
   }, []);
 
   const stepVolume = useCallback((delta: number) => {
@@ -1786,15 +1794,29 @@ export default function App() {
     invoke("seek", { seconds, mode: "absolute+keyframes" }).catch(logErr("seek_keyframes"));
   }, []);
 
+  // Visual-only: glue the bar to the cursor on press/drag WITHOUT issuing any
+  // backend seek. Setting seekTargetRef here makes the time-pos guard reject
+  // stale OLD-position events so the bar doesn't jitter back to the live
+  // position while the user holds the button. A plain click only ever goes
+  // through here + handleSeekCommit, so it produces exactly one exact seek —
+  // no nearest-keyframe flash.
   const handleSeek = useCallback((p: number) => {
     progressRef.current = p;
     const d = durationRef.current;
     if (d <= 0 || !hasFileRef.current) return;
     const seconds = (p / 100) * d;
     currentTimeRef.current = seconds;
-    // Set target immediately so the time-pos guard rejects stale OLD-position
-    // events that would otherwise flip progressRef back during the 33ms
-    // before fireDragSeek runs (the seek bar jitter).
+    seekTargetRef.current = seconds;
+  }, []);
+
+  // Live keyframe scrub — Timeline calls this ONLY after the pointer has
+  // actually moved (a real drag), throttled to ~33ms. Cheap `+keyframes`
+  // seeks follow the cursor for preview; the exact landing comes from
+  // handleSeekCommit on pointer-up.
+  const handleScrub = useCallback((p: number) => {
+    const d = durationRef.current;
+    if (d <= 0 || !hasFileRef.current) return;
+    const seconds = (p / 100) * d;
     seekTargetRef.current = seconds;
     dragSeekPendingRef.current = seconds;
     if (dragSeekTimerRef.current !== null) return;
@@ -2370,6 +2392,7 @@ export default function App() {
             onVolumeChange={handleVolumeChange}
             onMuteToggle={handleMuteToggle}
             onSeek={handleSeek}
+            onScrub={handleScrub}
             onSeekCommit={handleSeekCommit}
             onSpeedChange={handleSpeedChange}
             onAudioTrackChange={handleAudioTrackChange}
