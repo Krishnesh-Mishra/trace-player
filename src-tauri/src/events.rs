@@ -175,6 +175,23 @@ pub fn start_event_loop(
                     emit_chapters(&app, &player);
                     emit_hdr_info(&app, &player);
                     emit_playlist(&app, &player);
+                    // Decode-path diagnostic. If `hwdec` reads "no" on a 4K/8K
+                    // file the GPU decoder didn't engage (unsupported codec/res
+                    // or driver) and we're software-decoding — the give-away for
+                    // a CPU-bound 10-12 fps. Logged once per load, cheap.
+                    {
+                        let w = player.get_int_prop("video-params/w").unwrap_or(0);
+                        let h = player.get_int_prop("video-params/h").unwrap_or(0);
+                        let hwdec = player
+                            .get_string_prop_pub("hwdec-current")
+                            .unwrap_or_default();
+                        let fps = player.get_property_f64("container-fps").unwrap_or(0.0);
+                        crate::np_info!(
+                            "perf",
+                            "loaded {}x{} @ {:.3}fps hwdec-current='{}'",
+                            w, h, fps, hwdec
+                        );
+                    }
                 }
                 MpvEvent::EndFile { reason, error } => {
                     crate::np_info!("events", "END_FILE reason={reason} error={error}");

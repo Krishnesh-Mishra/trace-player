@@ -281,23 +281,25 @@ impl Player {
             set_opt_optional(handle, "background", "color");
             set_opt_optional(handle, "background-color", "#000000");
 
-            // Streaming-friendly cache. Defaults are 150 MiB demuxer +
-            // 75 MiB back-buffer = ~225 MB resident per file regardless of
-            // size. Trim to 10 + 5 MiB so a 10 GB film uses ~15 MB of RAM —
-            // the OS page cache covers locality. cache-on-disk=no avoids
-            // background disk writes during steady-state playback.
+            // Lean, mpv-default-style buffering. These are *ceilings*, filled
+            // only as needed — a 1080p file uses a couple MB, and even 8K uses
+            // only ~1 s of readahead (~15-30 MB). The old build trimmed the
+            // ceiling to 10 MiB to "save RAM", but 10 MiB is below ONE second
+            // of a 4K/8K-HDR stream (80-150 Mbps ≈ 12-19 MB/s), so the demuxer
+            // couldn't keep even default readahead and underran into the
+            // 10-12 fps judder. 64 MiB is a comfortable ceiling (~3-5 s of 8K)
+            // that never strangles playback yet stays tiny in practice.
+            // NOTE: the per-file `set_stream_cache` command re-applies these on
+            // every load — keep the two in sync.
             set_opt_optional(handle, "cache", "yes");
             set_opt_optional(handle, "cache-secs", "5");
             set_opt_optional(handle, "cache-on-disk", "no");
-            set_opt_optional(handle, "demuxer-max-bytes", "10MiB");
-            set_opt_optional(handle, "demuxer-max-back-bytes", "5MiB");
-            // Bound the decoded-frame queue (mpv 0.36+). Default queue can
-            // hold hundreds of MiB on 4K HDR content.
-            set_opt_optional(handle, "vd-queue-max-bytes", "64MiB");
+            set_opt_optional(handle, "demuxer-max-bytes", "64MiB");
+            set_opt_optional(handle, "demuxer-max-back-bytes", "32MiB");
 
             set_opt_optional(handle, "hr-seek", "yes");
             set_opt_optional(handle, "hr-seek-framedrop", "yes");
-            set_opt_optional(handle, "demuxer-readahead-secs", "1.0");
+            set_opt_optional(handle, "demuxer-readahead-secs", "1");
             set_opt_optional(handle, "vd-lavc-threads", "0");
 
             // Network playback via libavformat (http/https/rtsp/rtmp/mms).

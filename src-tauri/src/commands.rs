@@ -648,20 +648,28 @@ pub fn set_audio_fx(
 #[tauri::command]
 pub fn set_hdr_mode(mode: String, state: State<'_, AppState>) -> Result<(), String> {
     let p = player_ref(&state)?;
-    perf::apply_hdr(p, &mode)
+    perf::apply_hdr(p, &mode)?;
+    // Custom mode bypasses perf::apply, so re-assert the heavy-source clamp
+    // here too — on 4K+ HDR the peak-compute pass stays off regardless.
+    perf::clamp_if_heavy(p);
+    Ok(())
 }
 
 #[tauri::command]
 pub fn set_upscaling(profile: String, state: State<'_, AppState>) -> Result<(), String> {
     let p = player_ref(&state)?;
     let dir = state.perf.shader_dir_clone();
-    perf::apply_upscaling(p, &profile, dir.as_ref())
+    perf::apply_upscaling(p, &profile, dir.as_ref())?;
+    perf::clamp_if_heavy(p);
+    Ok(())
 }
 
 #[tauri::command]
 pub fn set_interpolation(mode: String, state: State<'_, AppState>) -> Result<(), String> {
     let p = player_ref(&state)?;
-    perf::apply_interpolation(p, &mode)
+    perf::apply_interpolation(p, &mode)?;
+    perf::clamp_if_heavy(p);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1047,8 +1055,17 @@ pub fn set_stream_cache(enabled: bool, state: State<'_, AppState>) -> Result<(),
         let _ = p.set_string_prop_pub("demuxer-readahead-secs", "15");
         let _ = p.set_string_prop_pub("cache-pause-initial", "no");
     } else {
+        // Local files come off disk far faster than realtime, so they only
+        // need ~1 s of readahead. Keep the demuxer ceiling lean but ABOVE one
+        // second of an 8K/4K-HDR stream — the old 10 MiB was below it and
+        // starved the decode pipeline into 10-12 fps judder. 64 MiB is a
+        // ceiling, not a reservation: actual use stays ~15-30 MB for 8K and a
+        // couple MB for HD. Also reset readahead in case we're coming back
+        // from a network source that bumped it to 15 s.
         p.set_string_prop_pub("cache-secs", "5")?;
-        p.set_string_prop_pub("demuxer-max-bytes", "10MiB")?;
+        p.set_string_prop_pub("demuxer-max-bytes", "64MiB")?;
+        let _ = p.set_string_prop_pub("demuxer-max-back-bytes", "32MiB");
+        let _ = p.set_string_prop_pub("demuxer-readahead-secs", "1");
         let _ = p.set_string_prop_pub("cache-on-disk", "no");
     }
     Ok(())

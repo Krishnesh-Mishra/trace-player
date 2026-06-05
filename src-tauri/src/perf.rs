@@ -101,6 +101,74 @@ pub fn resolve(profile: PerfProfile, on_battery: bool) -> Option<ResolvedPerf> {
     })
 }
 
+/// Frame size (pixels) at/above which the heavy gpu-next post-processing
+/// stack costs far more than it returns. At 4K (3840×2160 = 8.29 M) and up
+/// the source already meets or exceeds a typical display, so upscalers do
+/// nothing useful, and the per-frame passes (motion interpolation, neural
+/// prescalers, HDR peak-detect compute) just burn GPU time and can trip a
+/// driver TDR reset → crash. 7 M cleanly separates 4K+ from 1440p (3.7 M)
+/// and 3200×1800 (5.76 M), which keep the full quality stack.
+const HEAVY_PIXELS: i64 = 7_000_000;
+
+/// Current decoded frame size in pixels, or 0 if not known yet. `video-params`
+/// can lag the FileLoaded event by a few ms, so poll briefly — but only when
+/// it isn't ready (during steady-state playback it returns instantly).
+fn current_pixels(player: &Player) -> i64 {
+    for _ in 0..6 {
+        let w = player.get_int_prop("video-params/w").unwrap_or(0);
+        let h = player.get_int_prop("video-params/h").unwrap_or(0);
+        if w > 0 && h > 0 {
+            return w * h;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    0
+}
+
+/// True when the current file is 4K-class or larger (see HEAVY_PIXELS).
+pub fn is_heavy_source(player: &Player) -> bool {
+    current_pixels(player) >= HEAVY_PIXELS
+}
+
+/// Strip the post-processing that doesn't survive 4K+/HDR on real GPUs.
+/// This is what lets a mid-range card (e.g. RTX 3050 Ti) play 4K60 / 8K HDR
+/// as smoothly as VLC: VLC doesn't run motion interpolation, neural
+/// prescalers, or a per-frame HDR peak-detect compute pass either. We keep
+/// correct tone-mapping (gpu-next uses the static HDR10 metadata) and basic
+/// scaling, so the picture stays right — we only drop work that buys nothing
+/// when the source already exceeds the display.
+pub fn apply_heavy_clamp(player: &Player) {
+    // Motion interpolation renders the whole shader chain at *display* refresh
+    // (e.g. 144 Hz) instead of source fps — the single biggest GPU multiplier.
+    let _ = player.set_string_prop_pub("interpolation", "no");
+    let _ = player.set_string_prop_pub("video-sync", "audio");
+    // Neural / EWA prescalers (FSRCNNX, ewa_lanczossharp) run even when
+    // downscaling and return nothing when source ≥ display. Clear the user
+    // shader chain and drop to cheap scalers.
+    let _ = player.command(&["change-list", "glsl-shaders", "clr", ""]);
+    let _ = player.set_string_prop_pub("scale", "bilinear");
+    let _ = player.set_string_prop_pub("cscale", "bilinear");
+    let _ = player.set_string_prop_pub("dscale", "bilinear");
+    // Full-resolution per-frame compute pass; the heaviest single HDR knob at
+    // 8K. gpu-next still tone-maps from static metadata without it.
+    let _ = player.set_string_prop_pub("hdr-compute-peak", "no");
+    // Multi-tap debanding over 33 M pixels/frame is not free at 8K.
+    let _ = player.set_string_prop_pub("deband", "no");
+}
+
+/// If the current source is heavy, override the just-applied quality knobs
+/// with the smooth-playback clamp and report it. No-op on ≤1440p content.
+pub fn clamp_if_heavy(player: &Player) {
+    if is_heavy_source(player) {
+        crate::np_info!(
+            "perf",
+            "heavy source (≥4K) — dropping interpolation / neural-upscale / \
+             HDR peak-compute / deband for smooth playback"
+        );
+        apply_heavy_clamp(player);
+    }
+}
+
 /// Apply a resolved profile to the live mpv player.
 pub fn apply(
     player: &Player,
@@ -120,6 +188,10 @@ pub fn apply(
     if !is_battery_saver {
         apply_vsync(player, resolved.vsync)?;
     }
+    // Last word: on 4K+ content, undo whatever heavy passes the profile just
+    // turned on. Keeps Best Quality usable on big files instead of dropping
+    // to 10 fps / TDR-crashing.
+    clamp_if_heavy(player);
     Ok(())
 }
 
